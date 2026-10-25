@@ -1,0 +1,6 @@
+{"sessionId": "gemini-fixture-session", "projectHash": "fixture-project", "startTime": "2026-10-24T10:00:00Z", "lastUpdated": "2026-10-24T10:00:04Z", "kind": "main", "directories": ["/workspace/example"]}
+{"id": "g-user", "timestamp": "2026-10-24T10:00:00Z", "type": "user", "content": "Run the tests."}
+{"id": "g-model-1", "timestamp": "2026-10-24T10:00:01Z", "type": "gemini", "content": "Running tests.", "model": "gemini-fixture", "tokens": {"input": 100, "output": 20, "cached": 40, "thoughts": 10, "tool": 0, "total": 130}, "toolCalls": [{"id": "g-tool", "name": "run_shell_command", "args": {"command": "pytest"}, "result": "2 passed", "status": "success", "timestamp": "2026-10-24T10:00:02Z"}]}
+{"id": "g-model-2", "timestamp": "2026-10-24T10:00:04Z", "type": "gemini", "content": "All tests passed.", "model": "gemini-fixture", "tokens": {"input": 120, "output": 12, "cached": 50, "thoughts": 3, "total": 135}}
+{"$set": {"lastUpdated": "2026-10-24T10:00:04Z"}}
+{"$patch": {"id": "g-model-2", "content": "Tests pass."}}
