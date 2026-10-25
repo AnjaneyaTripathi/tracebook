@@ -62,7 +62,9 @@ a user launchd job, reports a clean health endpoint, and generated a private loc
 nightly report. After loading this history its RSS measured 68.4 MiB. A concurrent
 capture/reporting sample used 5.8% CPU; this is active workload, not the isolated
 idle benchmark above. Source discovery subsequently gained a cold-file scan path
-to avoid opening historical files on every two-second poll.
+to avoid opening historical files on every two-second poll. After that change,
+the live daemon with the populated database measured **0.4% CPU over five seconds
+and 64.5 MiB RSS**, with a clean health endpoint.
 
 The full history exposed additional Codex variants, now documented and covered by
 sanitized fixtures. Historical warnings from an earlier parser remain evidence;
