@@ -13,7 +13,7 @@ from tracebook.adapters import adapters
 from tracebook.analysis import analyze
 from tracebook.api import create_api, create_otlp
 from tracebook.config import Config
-from tracebook.model import Event, utc
+from tracebook.model import Event, Source, utc
 from tracebook.otel import attributes, decode, ingest_otlp, map_records
 from tracebook.pricing import PriceBook
 from tracebook.reports import deliver, nightly_window, report
@@ -124,6 +124,85 @@ def test_pricing_aliases_tiers_and_missing(tmp_path: Path, store: Store):
     assert PriceBook(path).estimate(
         {"model": "bad", "input_uncached": 1, "output": 1, "input_cache_write": 5}
     ) == (None, "missing_rate")
+
+
+def test_verified_rates_long_context_and_cache_ttl():
+    book = PriceBook(Path("examples/pricing.toml"))
+    call = {
+        "model": "gpt-6.1-sol",
+        "input_uncached": 200000,
+        "input_cache_read": 72000,
+        "output": 100,
+        "reasoning": 20,
+    }
+    assert book.estimate(call)[0] == pytest.approx(0.4084)
+    call["input_uncached"] += 1
+    # Crossing 272K reprices all input plus both visible and reasoning output.
+    assert book.estimate(call)[0] == pytest.approx(0.816204)
+    claude = {
+        "model": "claude-sonnet-5-5",
+        "input_uncached": 10,
+        "input_cache_read": 500,
+        "input_cache_write": 2000,
+        "output": 100,
+        "reasoning": 20,
+        "data": json.dumps({"cache_write_tokens_by_ttl": {"300": 1000, "3600": 1000}}),
+    }
+    assert book.estimate(claude)[0] == pytest.approx(0.00777)
+    claude["input_cache_write"] = 1999
+    assert book.estimate(claude) == (None, "invalid_cache_write_usage")
+    claude["input_cache_write"] = 2000
+    claude["data"] = json.dumps({"cache_write_tokens_by_ttl": {"999": 2000}})
+    assert book.estimate(claude) == (None, "missing_rate")
+    book.models["anthropic/claude-sonnet-5-5"]["cache_write_by_ttl"]["999"] = -1
+    with pytest.raises(ValueError):
+        book.estimate(claude)
+    fixture = Path("tests/fixtures/claude_code/2.1.285/observed.jsonl")
+    events = adapters()["claude_code"].parse_transcript(Source(str(fixture)), fixture.read_bytes())
+    first = next(event for event in events if event.kind == "model_call")
+    assert first.data["cache_write_tokens_by_ttl"] == {"300": 0, "3600": 8881}
+
+
+def test_report_model_breakdown_preserves_unknowns_and_cost_precedence(store, tmp_path):
+    seed(store)
+    pricing = tmp_path / "pricing.toml"
+    pricing.write_text(
+        'as_of="2026-10-25"\nbasis="Standard token estimate"\n[models.test-model]\ninput=2\noutput=10\nsource="https://example.test/pricing"\n'
+    )
+    PriceBook(pricing).apply(store)
+    store.ingest(Event("generic", "missing", "model_call", utc(2), "unknown", data={}))
+    store.ingest(
+        Event(
+            "generic",
+            "reported",
+            "model_call",
+            utc(2),
+            "priced",
+            data={
+                "model": "reported-model",
+                "input_uncached": 0,
+                "output": 0,
+                "cost_reported": 1.5,
+                "cost_estimated": 99,
+            },
+        )
+    )
+    result = report(store, Config(root=tmp_path), adapters(), utc(1), utc(8), enqueue=False)
+    models = {row["model"]: row for row in result["models"]}
+    assert models["test-model"]["input_uncached"] == 220000
+    assert models["test-model"]["output"] == 500
+    assert models["test-model"]["reasoning"] == 100
+    assert models["test-model"]["cost_estimated"] == pytest.approx(0.446)
+    assert models[None]["input_uncached"] is None
+    assert models[None]["cost_estimated"] is None
+    assert models[None]["unpriced_calls"] == 1
+    assert models["reported-model"]["cost_estimated"] is None
+    assert models["reported-model"]["cost_reported"] == 1.5
+    assert sum(row["calls"] for row in models.values()) == result["usage"]["calls"]
+    assert "## Tokens by model" in result["body"]
+    assert "## Cost by model" in result["body"]
+    assert "Standard token estimate" in result["body"]
+    assert "https://example.test/pricing" in result["body"]
 
 
 def test_rules_are_explainable_and_replay_stable(store: Store):

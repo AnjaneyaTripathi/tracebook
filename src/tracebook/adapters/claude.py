@@ -146,6 +146,16 @@ class ClaudeAdapter(Adapter):
                 "aliases": [message.get("id"), record.get("requestId")],
                 "request_id": record.get("requestId"),
             }
+            creation = obj(usage.get("cache_creation"))
+            if creation:
+                data["cache_write_tokens_by_ttl"] = {
+                    ttl: number(creation[field])
+                    for ttl, field in (
+                        ("300", "ephemeral_5m_input_tokens"),
+                        ("3600", "ephemeral_1h_input_tokens"),
+                    )
+                    if field in creation
+                }
             if usage:
                 yield self.event(
                     record, state, "model_call", record.get("requestId") or message.get("id"), data

@@ -64,6 +64,17 @@ Enter verified USD-per-million rates under `[models.'provider/model']`, aliases,
 optional cache/reasoning rates and long-context tiers using
 [examples/pricing.toml](../examples/pricing.toml). Set `as_of` to the verified date.
 Tracebook does not fetch or guess rates. Run `tracebook reanalyze` after edits.
+The example includes official Standard API rates verified on 2026-10-25 for
+seven named GPT/Claude models, source URLs and per-call long-context tiers.
+Copy only the entries you want; preserve any existing negotiated rates. This
+revalues historical usage at the rate card's date, rather than reconstructing
+historical invoices. `cache_write_by_ttl` maps durations in seconds to rates;
+canonical `cache_write_tokens_by_ttl` partitions writes without double-counting.
+Replay Claude sources with `backfill --agent claude_code --reset` to recover TTL
+metadata from transcripts captured before this field was supported.
+Reports include per-model token categories, estimated/reported values, unpriced
+record counts and pricing provenance. Standard estimates exclude service-tier
+and regional modifiers, taxes, provider tool fees and account discounts.
 Nonzero token buckets without a known applicable rate remain unpriced. Agent
 reported cost takes precedence in totals; estimated cost is shown separately and
 only fills calls without reported cost. Preserve original provenance even when an

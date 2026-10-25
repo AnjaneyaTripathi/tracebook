@@ -35,8 +35,11 @@ cumulative session snapshot; never sum snapshots or spread them across calls.
 `input_tokens` excludes cache reads and writes; use separate
 `cache_read_input_tokens` and `cache_creation_input_tokens`. If
 `output_tokens_details.thinking_tokens` exists, subtract it from output and store
-it as reasoning. Otherwise reasoning is null. Cache TTL breakdowns and iterations
-are extra evidence, not additional usage. Telemetry `cost_usd` is reported by
+it as reasoning. Otherwise reasoning is null. Cache TTL breakdowns map to
+`cache_write_tokens_by_ttl` with seconds as string keys (`300` and `3600`).
+They partition cache-write tokens for pricing; they are not additional usage.
+Observed transcripts contain both five-minute and one-hour cache writes.
+Iterations remain extra evidence. Telemetry `cost_usd` is reported by
 the agent but explicitly estimated by Claude; it is API-equivalent value.
 
 ## Hooks and telemetry
@@ -66,3 +69,7 @@ Sources checked 2026-10-24:
 [hooks](https://code.claude.com/docs/en/hooks),
 [monitoring](https://code.claude.com/docs/en/monitoring-usage),
 [settings](https://code.claude.com/docs/en/settings).
+
+Pricing and TTL mapping checked 2026-10-25 against local usage records and
+[official pricing](https://platform.claude.com/docs/en/about-claude/pricing) /
+[prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).

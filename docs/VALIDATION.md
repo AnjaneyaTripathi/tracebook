@@ -7,7 +7,7 @@ Local validation on macOS / Python 3.12.13:
   replay/rotation/partial lines, WAL snapshots, hook silence, secrets, pricing,
   every detector, API/OTLP, scheduler/DST, outbox retries and daemon lifecycle.
 - Coverage gate is 85% across the package, including branches; recent local run
-  is approximately 92% with 67 tests. CI runs the same checks on Linux and macOS.
+  is approximately 92% with 69 tests. CI runs the same checks on Linux and macOS.
 - Four Chromium/Chrome browser tests exercise desktop/mobile rendering, session
   filtering, per-prompt model usage and tool IO, missing versus zero usage, request
   retries, provenance, capabilities and report generation. Screenshots
@@ -70,5 +70,6 @@ and 64.5 MiB RSS**, with a clean health endpoint.
 The full history exposed additional Codex variants, now documented and covered by
 sanitized fixtures. Historical warnings from an earlier parser remain evidence;
 a source replay may add newly understood canonical records without erasing old
-warnings. Pricing remains unconfigured for locally observed private/unknown model
-IDs; costs correctly remain unavailable until verified rates are supplied.
+warnings. Pricing was initially unconfigured. Official Standard rates for the
+seven named GPT/Claude models were subsequently verified on 2026-10-25 and added
+to the opt-in example rate card. Unknown, missing and synthetic labels remain unpriced.

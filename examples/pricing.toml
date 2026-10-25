@@ -1,15 +1,104 @@
-# All rates are USD per million tokens. Example values are deliberately omitted.
-# Add rates from your provider contract; Tracebook never downloads pricing.
-as_of = "2026-10-24"
+# USD per million tokens, verified from official pages on 2026-10-25.
+# Opt-in local rate card; the daemon does not download or auto-update rates.
+# Reasoning uses the output rate, including the long-context output rate.
+# Without TTL details, writes assume 30m for OpenAI or 5m for Anthropic.
+as_of = "2026-10-25"
+basis = "Current Standard API token rates applied to historical usage; not historical invoices. Excludes Fast/Ultrafast, regional modifiers, hosted-tool fees, taxes and account discounts. Cache-write TTLs are used when captured; otherwise the shortest published TTL is assumed."
 
-# [models."provider/exact-model-id"]
-# aliases = ["exact-model-id"]
-# input = 0.0
-# output = 0.0
-# cache_read = 0.0
-# cache_write = 0.0
-# reasoning = 0.0
-# [[models."provider/exact-model-id".tiers]]
-# above_input_tokens = 200000
-# input = 0.0
-# output = 0.0
+[models."openai/gpt-6-astra"]
+aliases = ["gpt-6-astra"]
+source = "https://developers.openai.com/api/docs/pricing"
+input = 10.0
+output = 50.0
+cache_read = 1.0
+cache_write = 12.5
+cache_write_by_ttl = { "1800" = 12.5, "43200" = 25.0 }
+[[models."openai/gpt-6-astra".tiers]]
+above_input_tokens = 272000
+input = 20.0
+output = 75.0
+cache_read = 2.0
+cache_write = 25.0
+cache_write_by_ttl = { "1800" = 25.0, "43200" = 50.0 }
+
+[models."openai/gpt-6.1-sol"]
+aliases = ["gpt-6.1-sol"]
+source = "https://developers.openai.com/api/docs/pricing"
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+cache_write_by_ttl = { "1800" = 2.5, "43200" = 5.0 }
+[[models."openai/gpt-6.1-sol".tiers]]
+above_input_tokens = 272000
+input = 4.0
+output = 15.0
+cache_read = 0.2
+cache_write = 5.0
+cache_write_by_ttl = { "1800" = 5.0, "43200" = 10.0 }
+
+[models."openai/gpt-5.6-sol"]
+aliases = ["gpt-5.6-sol"]
+source = "https://developers.openai.com/api/docs/pricing"
+input = 4.0
+output = 20.0
+cache_read = 0.4
+cache_write = 5.0
+cache_write_by_ttl = { "1800" = 5.0, "43200" = 10.0 }
+[[models."openai/gpt-5.6-sol".tiers]]
+above_input_tokens = 272000
+input = 8.0
+output = 30.0
+cache_read = 0.8
+cache_write = 10.0
+cache_write_by_ttl = { "1800" = 10.0, "43200" = 20.0 }
+
+[models."openai/gpt-5.6-terra"]
+aliases = ["gpt-5.6-terra"]
+source = "https://developers.openai.com/api/docs/pricing"
+input = 2.0
+output = 12.0
+cache_read = 0.2
+cache_write = 2.5
+cache_write_by_ttl = { "1800" = 2.5, "43200" = 5.0 }
+[[models."openai/gpt-5.6-terra".tiers]]
+above_input_tokens = 272000
+input = 4.0
+output = 18.0
+cache_read = 0.4
+cache_write = 5.0
+cache_write_by_ttl = { "1800" = 5.0, "43200" = 10.0 }
+
+[models."openai/gpt-5.6-luna"]
+aliases = ["gpt-5.6-luna"]
+source = "https://developers.openai.com/api/docs/pricing"
+input = 0.2
+output = 1.2
+cache_read = 0.02
+cache_write = 0.25
+cache_write_by_ttl = { "1800" = 0.25, "43200" = 0.5 }
+[[models."openai/gpt-5.6-luna".tiers]]
+above_input_tokens = 272000
+input = 0.4
+output = 1.8
+cache_read = 0.04
+cache_write = 0.5
+cache_write_by_ttl = { "1800" = 0.5, "43200" = 1.0 }
+
+[models."anthropic/claude-sonnet-5-5"]
+aliases = ["claude-sonnet-5-5"]
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+cache_write_by_ttl = { "300" = 2.5, "3600" = 4.0 }
+
+[models."anthropic/claude-opus-5-5"]
+aliases = ["claude-opus-5-5"]
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+input = 4.0
+output = 20.0
+cache_read = 0.2
+cache_write = 5.0
+cache_write_by_ttl = { "300" = 5.0, "3600" = 8.0 }

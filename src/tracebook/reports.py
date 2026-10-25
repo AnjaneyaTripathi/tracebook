@@ -54,6 +54,22 @@ def report(
         raise ValueError("Report start must be before end")
     key = digest("report-v1", start, end)
     usage = store.overview(start, end)
+    models = store.rows(
+        "SELECT agent,model,COUNT(*) calls,"
+        "SUM(input_uncached) input_uncached,SUM(input_cache_read) input_cache_read,"
+        "SUM(input_cache_write) input_cache_write,SUM(output) output,SUM(reasoning) reasoning,"
+        "SUM(cost_reported) cost_reported,"
+        "SUM(CASE WHEN cost_reported IS NULL THEN cost_estimated END) cost_estimated,"
+        "SUM(cost_reported IS NULL AND cost_estimated IS NULL) unpriced_calls "
+        "FROM accounted_model_calls WHERE ts>=? AND ts<? GROUP BY agent,model ORDER BY calls DESC",
+        (start, end),
+    )
+    pricing = store.rows(
+        "SELECT DISTINCT json_extract(data,'$.pricing_as_of') as_of,"
+        "json_extract(data,'$.pricing_basis') basis,json_extract(data,'$.pricing_source') source "
+        "FROM accounted_model_calls WHERE ts>=? AND ts<? AND cost_estimated IS NOT NULL",
+        (start, end),
+    )
     findings = store.rows(
         "SELECT * FROM findings WHERE ts>=? AND ts<? ORDER BY severity DESC,ts DESC", (start, end)
     )
@@ -75,6 +91,8 @@ def report(
         "start": start,
         "end": end,
         "usage": usage,
+        "models": models,
+        "pricing": pricing,
         "turns": counts,
         "findings": findings,
         "coverage": coverage,
@@ -90,20 +108,72 @@ def report(
         return "unavailable" if amount is None else f"${float(str(amount)):.4f}"
 
     lines = [
-        "# Tracebook nightly report",
+        "# Tracebook usage report",
         "",
         f"Window: {start} → {end} (end exclusive)",
         "",
         f"Prompts: {counts['turns']} · Model calls: {usage['calls']} · Unpriced calls: {usage['unpriced_calls'] or 0}",
-        f"Input uncached: {usage['input_uncached']} · Cache read: {usage['input_cache_read']} · Output: {usage['output']} · Reasoning: {usage['reasoning']}",
+        f"Input uncached: {usage['input_uncached']} · Cache read: {usage['input_cache_read']} · Cache write: {usage['input_cache_write']} · Output: {usage['output']} · Reasoning: {usage['reasoning']}",
         f"Reported value: {money(usage['cost_reported'])} · Estimated value: {money(usage['cost_estimated'])}",
         "",
         value_note,
         "Missing counters and prices are unknown, never assumed to be zero.",
         "",
-        "## Findings",
+        "## Tokens by model",
         "",
+        "| Agent | Model | Usage records | Input uncached | Cache read | Cache write | Output | Reasoning |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+
+    def cell(value: object) -> str:
+        return (
+            str(value if value is not None else "unavailable")
+            .replace("|", "\\|")
+            .replace("\n", " ")
+        )
+
+    for model in models:
+        lines.append(
+            "| "
+            + " | ".join(
+                cell(model[field])
+                for field in (
+                    "agent",
+                    "model",
+                    "calls",
+                    "input_uncached",
+                    "input_cache_read",
+                    "input_cache_write",
+                    "output",
+                    "reasoning",
+                )
+            )
+            + " |"
+        )
+    lines += [
+        "",
+        "## Cost by model",
+        "",
+        "| Agent | Model | Reported value | Estimated value | Unpriced records |",
+        "| --- | --- | ---: | ---: | ---: |",
+    ]
+    for model in models:
+        lines.append(
+            f"| {cell(model['agent'])} | {cell(model['model'])} | "
+            f"{money(model['cost_reported'])} | {money(model['cost_estimated'])} | "
+            f"{model['unpriced_calls']} |"
+        )
+    lines += [
+        "",
+        "Estimated value only fills records without reported cost. "
+        "Unpriced records are excluded, so a partial sum is not a complete cost total.",
+    ]
+    for card in pricing:
+        lines.append(
+            f"Pricing as of {cell(card['as_of'])}: {cell(card['basis'])}. "
+            f"Source: {cell(card['source'])}"
+        )
+    lines += ["", "## Findings", ""]
     if not findings:
         lines.append("No rules triggered in this window. Missing capture data can limit detection.")
     for finding in findings:

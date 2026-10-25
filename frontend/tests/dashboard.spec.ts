@@ -37,6 +37,8 @@ test('explore sessions, evidence, findings, coverage and a report', async ({ pag
   await page.getByRole('button', { name: 'Reports', exact: true }).click();
   await page.getByRole('button', { name: 'Generate report' }).click();
   await expect(page.getByRole('dialog', { name: 'Generated report' })).toContainText('not billed spend');
+  await expect(page.getByRole('dialog', { name: 'Generated report' })).toContainText('Tokens by model');
+  await expect(page.getByRole('dialog', { name: 'Generated report' })).toContainText('Cost by model');
   await expect(page.getByRole('button', { name: 'Download Markdown' })).toBeVisible();
   expect(errors).toEqual([]);
 });
