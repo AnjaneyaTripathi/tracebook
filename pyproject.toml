@@ -20,6 +20,7 @@ claude_code = "tracebook.adapters.claude:ClaudeAdapter"
 codex = "tracebook.adapters.codex:CodexAdapter"
 gemini_cli = "tracebook.adapters.gemini:GeminiAdapter"
 generic = "tracebook.adapters.generic:GenericAdapter"
+opencode = "tracebook.adapters.opencode:OpenCodeAdapter"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-cov>=6", "mypy>=1.15", "ruff>=0.11", "httpx>=0.28", "types-protobuf>=5", "psutil>=7"]

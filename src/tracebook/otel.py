@@ -1,4 +1,5 @@
 """OTLP decoding and generic semantic event mapping; vendor fields live in adapters."""
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,11 @@ def value(data: object) -> Any:
 
 
 def attributes(items: object) -> Json:
-    return {str(i["key"]): value(i.get("value")) for i in items if isinstance(i, dict) and "key" in i} if isinstance(items, list) else {}
+    return (
+        {str(i["key"]): value(i.get("value")) for i in items if isinstance(i, dict) and "key" in i}
+        if isinstance(items, list)
+        else {}
+    )
 
 
 def records(document: Json, signal: str) -> Iterable[tuple[Json, Json]]:
@@ -56,46 +61,93 @@ def records(document: Json, signal: str) -> Iterable[tuple[Json, Json]]:
                 if signal == "logs":
                     attrs = {**common, **attributes(record.get("attributes"))}
                     attrs["_body"] = value(record.get("body"))
-                    attrs["_time_ns"] = record.get("timeUnixNano", record.get("observedTimeUnixNano", "0"))
+                    attrs["_time_ns"] = record.get(
+                        "timeUnixNano", record.get("observedTimeUnixNano", "0")
+                    )
                     attrs["_event_name"] = record.get("eventName")
                     yield common, attrs
                 else:
                     for typ in ("sum", "gauge", "histogram", "exponentialHistogram", "summary"):
                         metric = obj(record.get(typ))
                         for point in metric.get("dataPoints", []):
-                            yield common, {**common, **attributes(point.get("attributes")), "_metric": record.get("name"), "unit": record.get("unit"), "temporality": metric.get("aggregationTemporality"), "point": point, "_time_ns": point.get("timeUnixNano", "0")}
+                            yield (
+                                common,
+                                {
+                                    **common,
+                                    **attributes(point.get("attributes")),
+                                    "_metric": record.get("name"),
+                                    "unit": record.get("unit"),
+                                    "temporality": metric.get("aggregationTemporality"),
+                                    "point": point,
+                                    "_time_ns": point.get("timeUnixNano", "0"),
+                                },
+                            )
 
 
 def map_records(adapter: Adapter, logs: list[Json], metrics: list[Json]) -> Iterable[Event]:
     for item in [*logs, *metrics]:
-        session = str(item.get("session.id", item.get("conversation.id", item.get("gen_ai.conversation.id", "uncorrelated"))))
+        session = str(
+            item.get(
+                "session.id",
+                item.get("conversation.id", item.get("gen_ai.conversation.id", "uncorrelated")),
+            )
+        )
         turn = item.get("prompt.id", item.get("prompt_id", item.get("turn.id")))
         timestamp = item.get("event.timestamp") or (int(item.get("_time_ns", 0)) / 1e9)
-        native = item.get("request_id", item.get("response_id", item.get("tool_use_id", item.get("call_id"))))
-        name = str(item.get("_event_name") or item.get("event.name") or item.get("_body") or "unknown")
+        native = item.get(
+            "request_id", item.get("response_id", item.get("tool_use_id", item.get("call_id")))
+        )
+        name = str(
+            item.get("_event_name") or item.get("event.name") or item.get("_body") or "unknown"
+        )
         suffix = name.split(".")[-1]
-        data: Json = {"model": item.get("model", item.get("gen_ai.response.model")), "duration_ms": item.get("duration_ms"), "native_event": name}
+        data: Json = {
+            "model": item.get("model", item.get("gen_ai.response.model")),
+            "duration_ms": item.get("duration_ms"),
+            "native_event": name,
+        }
         if "_metric" in item:
             kind, data = "metric", dict(item)
         elif suffix in {"user_prompt", "prompt"}:
             kind = "turn_start"
             native = item.get("message.uuid") or turn
-            data.update(prompt=item.get("prompt_text", item.get("prompt")), kind="command" if item.get("command_name") else "prompt", aliases=[turn, item.get("message.uuid")])
-        elif suffix in {"api_response", "api_request", "sse_event", "websocket_event"} and any(field in item for field in adapter.otel_token_fields.values()):
+            data.update(
+                prompt=item.get("prompt_text", item.get("prompt")),
+                kind="command" if item.get("command_name") else "prompt",
+                aliases=[turn, item.get("message.uuid")],
+            )
+        elif suffix in {"api_response", "api_request", "sse_event", "websocket_event"} and any(
+            field in item for field in adapter.otel_token_fields.values()
+        ):
             kind = "model_call"
-            data.update({key: number(item.get(field)) for key, field in adapter.otel_token_fields.items()})
+            data.update(
+                {key: number(item.get(field)) for key, field in adapter.otel_token_fields.items()}
+            )
             if adapter.input_includes_cache and data.get("input_uncached") is not None:
-                data["input_uncached"] = max(0, data["input_uncached"] - (data.get("input_cache_read") or 0) - (data.get("input_cache_write") or 0))
+                data["input_uncached"] = max(
+                    0,
+                    data["input_uncached"]
+                    - (data.get("input_cache_read") or 0)
+                    - (data.get("input_cache_write") or 0),
+                )
             if adapter.output_includes_reasoning and data.get("output") is not None:
                 data["output"] = max(0, data["output"] - (data.get("reasoning") or 0))
             data["token_semantics_confidence"] = "adapter_documented"
-            data["cost_reported"] = float(item["cost_usd"]) if item.get("cost_usd") is not None else None
+            data["cost_reported"] = (
+                float(item["cost_usd"]) if item.get("cost_usd") is not None else None
+            )
             data["cost_semantics"] = "agent_reported_api_value"
             data["aliases"] = [native, item.get("message.id")]
         elif suffix in {"tool_result", "tool_call"}:
             kind = "tool_result"
             tool = str(item.get("tool_name", item.get("function_name", "unknown")))
-            data.update(tool=tool_kind(tool), native_name=tool, input=tool_input(item.get("tool_input")), output=item.get("output"), status="error" if item.get("success") in (False, "false") else "completed")
+            data.update(
+                tool=tool_kind(tool),
+                native_name=tool,
+                input=tool_input(item.get("tool_input")),
+                output=item.get("output"),
+                status="error" if item.get("success") in (False, "false") else "completed",
+            )
         elif suffix in {"tool_decision", "permission"}:
             kind = "permission"
             data["decision"] = item.get("decision")
@@ -107,21 +159,51 @@ def map_records(adapter: Adapter, logs: list[Json], metrics: list[Json]) -> Iter
         else:
             kind = "warning"
             data["reason"] = "unmapped_telemetry"
-        yield Event(adapter.id, session, kind, utc(timestamp), str(native or digest(item)), str(turn) if turn else None, "otel", data)
+        yield Event(
+            adapter.id,
+            session,
+            kind,
+            utc(timestamp),
+            str(native or digest(item)),
+            str(turn) if turn else None,
+            "otel",
+            data,
+        )
 
 
-def ingest_otlp(store: Store, adapters: dict[str, Adapter], document: Json, signal: str, own_transaction: bool = True) -> int:
+def ingest_otlp(
+    store: Store,
+    adapters: dict[str, Adapter],
+    document: Json,
+    signal: str,
+    own_transaction: bool = True,
+) -> int:
     count = 0
     with store.transaction() if own_transaction else nullcontext():
         for common, record in records(document, signal):
             service = str(common.get("service.name", ""))
-            adapter = next((a for a in adapters.values() if service in a.otel_services), adapters["generic"])
+            adapter = next(
+                (a for a in adapters.values() if service in a.otel_services), adapters["generic"]
+            )
+            adapter.state_root = store.path.parent
             store.raw(adapter.id, "otel", record)
-            events = adapter.map_otel([record] if signal == "logs" else [], [record] if signal == "metrics" else [])
+            events = adapter.map_otel(
+                [record] if signal == "logs" else [], [record] if signal == "metrics" else []
+            )
             try:
                 for event in events:
                     store.ingest(event)
                     count += 1
             except (ValueError, TypeError, OverflowError, AttributeError):
-                store.ingest(Event(adapter.id, "uncorrelated", "warning", utc(), digest(record), source="otel", data={"reason": "malformed_telemetry"}))
+                store.ingest(
+                    Event(
+                        adapter.id,
+                        "uncorrelated",
+                        "warning",
+                        utc(),
+                        digest(record),
+                        source="otel",
+                        data={"reason": "malformed_telemetry"},
+                    )
+                )
     return count

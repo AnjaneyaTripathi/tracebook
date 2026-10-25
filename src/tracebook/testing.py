@@ -1,4 +1,5 @@
 """Adapter conformance checks third parties can run with pytest or plain Python."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -33,7 +34,11 @@ def assert_invariants(events: Iterable[Event], complete: bool = True) -> list[Ev
             results.add(identity)
         if event.id in unique:
             prior = unique[event.id]
-            assert (prior.kind, prior.native_id, prior.session_id) == (event.kind, event.native_id, event.session_id), "ID collision"
+            assert (prior.kind, prior.native_id, prior.session_id) == (
+                event.kind,
+                event.native_id,
+                event.session_id,
+            ), "ID collision"
         unique[event.id] = event
     if complete:
         assert results <= calls, f"Orphan results: {results - calls}"
@@ -45,7 +50,15 @@ def assert_invariants(events: Iterable[Event], complete: bool = True) -> list[Ev
 
 
 def conform(adapter: Adapter, fixtures: list[Path], complete: bool = True) -> list[Event]:
-    first = [e for path in fixtures for e in adapter.parse_transcript(Source(str(path)), path.read_bytes())]
-    second = [e for path in fixtures for e in adapter.parse_transcript(Source(str(path)), path.read_bytes())]
+    first = [
+        e
+        for path in fixtures
+        for e in adapter.parse_transcript(Source(str(path)), path.read_bytes())
+    ]
+    second = [
+        e
+        for path in fixtures
+        for e in adapter.parse_transcript(Source(str(path)), path.read_bytes())
+    ]
     assert [e.id for e in first] == [e.id for e in second], "Replay must preserve IDs"
     return assert_invariants(first, complete)

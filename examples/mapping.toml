@@ -1,0 +1,15 @@
+[fields]
+session_id = "session"
+turn_id = "prompt_id"
+native_id = "id"
+ts = "timestamp"
+kind = "event"
+prompt = "text"
+model = "model"
+input_uncached = "tokens.input"
+output = "tokens.output"
+
+[kinds]
+prompt = "turn_start"
+response = "model_call"
+done = "turn_end"

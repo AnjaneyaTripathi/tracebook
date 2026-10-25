@@ -1,0 +1,27 @@
+port = 8742
+otlp_port = 4318
+poll_seconds = 2.0
+scan_seconds = 30.0
+billing_mode = "mixed"
+capture_content = true
+redact_patterns = []
+timezone = "UTC"
+report_hour = 23
+
+[delivery.file]
+enabled = true
+# directory = "/path/to/private/reports"
+
+[delivery.webhook]
+enabled = false
+# url = "https://your-configured-endpoint.example/reports"
+# token_env = "TRACEBOOK_WEBHOOK_TOKEN"
+
+[delivery.smtp]
+enabled = false
+# host = "smtp.example.com"
+# port = 587
+# from = "you@example.com"
+# to = "you@example.com"
+# username = "you@example.com"
+# password_env = "TRACEBOOK_SMTP_PASSWORD"

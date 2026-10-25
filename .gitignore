@@ -17,3 +17,5 @@ frontend/dist/
 .env
 playwright-report/
 test-results/
+
+*.tsbuildinfo

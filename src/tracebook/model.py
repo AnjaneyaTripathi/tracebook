@@ -1,22 +1,66 @@
 """Versioned, vendor-neutral capture contract."""
+
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import orjson
+
 Json = dict[str, Any]
 Support = Literal["yes", "no", "partial"]
-KINDS = frozenset({"session", "turn_start", "turn_end", "model_call", "tool_call", "tool_result", "permission", "compaction", "subagent", "metric", "process", "warning", "lifecycle"})
-TOOLS = frozenset({"shell", "file_read", "file_write", "file_edit", "file_search", "web_fetch", "web_search", "subagent", "mcp", "notebook", "todo_plan", "ask_user", "other"})
+KINDS = frozenset(
+    {
+        "session",
+        "turn_start",
+        "turn_end",
+        "model_call",
+        "tool_call",
+        "tool_result",
+        "permission",
+        "compaction",
+        "subagent",
+        "metric",
+        "process",
+        "warning",
+        "lifecycle",
+    }
+)
+TOOLS = frozenset(
+    {
+        "shell",
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "web_fetch",
+        "web_search",
+        "subagent",
+        "mcp",
+        "notebook",
+        "todo_plan",
+        "ask_user",
+        "other",
+    }
+)
 STATUSES = frozenset({"completed", "interrupted", "error", "compacted", "unknown"})
-TOKEN_FIELDS = ("input_uncached", "input_cache_read", "input_cache_write", "output", "reasoning", "total_reported")
+TOKEN_FIELDS = (
+    "input_uncached",
+    "input_cache_read",
+    "input_cache_write",
+    "output",
+    "reasoning",
+    "total_reported",
+)
 
 
 def digest(*parts: object) -> str:
-    return hashlib.blake2b(json.dumps(parts, sort_keys=True, default=str, separators=(",", ":")).encode(), digest_size=16).hexdigest()
+    return hashlib.blake2b(
+        orjson.dumps(parts, option=orjson.OPT_SORT_KEYS, default=str),
+        digest_size=16,
+    ).hexdigest()
 
 
 def utc(value: object = None) -> str:
@@ -53,7 +97,9 @@ def text_content(value: object) -> str:
 
 def number(value: object) -> int | None:
     try:
-        return max(0, int(str(value))) if value is not None and not isinstance(value, bool) else None
+        return (
+            max(0, int(str(value))) if value is not None and not isinstance(value, bool) else None
+        )
     except (ValueError, OverflowError):
         return None
 
@@ -129,4 +175,3 @@ class Diff:
     path: str
     text: str
     changed: bool
-

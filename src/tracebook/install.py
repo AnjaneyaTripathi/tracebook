@@ -1,4 +1,5 @@
 """Conservative, idempotent configuration edits with exact-command ownership."""
+
 from __future__ import annotations
 
 import difflib
@@ -15,8 +16,27 @@ from tracebook.model import Diff, now, obj
 from tracebook.platform import atomic_write
 
 EVENTS = {
-    "claude_code": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "PreCompact", "SubagentStart", "SubagentStop", "PermissionRequest"],
-    "gemini_cli": ["SessionStart", "BeforeAgent", "BeforeTool", "AfterTool", "AfterAgent", "PreCompress", "Notification"],
+    "claude_code": [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "Stop",
+        "PreCompact",
+        "SubagentStart",
+        "SubagentStop",
+        "PermissionRequest",
+    ],
+    "gemini_cli": [
+        "SessionStart",
+        "BeforeAgent",
+        "BeforeTool",
+        "AfterTool",
+        "AfterAgent",
+        "PreCompress",
+        "Notification",
+    ],
 }
 
 
@@ -26,7 +46,11 @@ def shim_command(agent: str) -> list[str]:
 
 def owned(command: object) -> bool:
     if isinstance(command, list):
-        return len(command) >= 5 and command[2] == str(Path(hook.__file__).resolve()) and command[3] == "--agent"
+        return (
+            len(command) >= 5
+            and command[2] == str(Path(hook.__file__).resolve())
+            and command[3] == "--agent"
+        )
     if isinstance(command, str):
         try:
             return owned(shlex.split(command))
@@ -45,19 +69,27 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
     if adapter.id == "codex":
         document = tomlkit.parse(before)
         previous = document.get("notify")
-        prior = previous.unwrap() if previous is not None and hasattr(previous, "unwrap") else previous
+        prior = (
+            previous.unwrap() if previous is not None and hasattr(previous, "unwrap") else previous
+        )
         if owned(prior):
             if uninstall:
-                if isinstance(prior, list) and "--forward" in prior:
+                if isinstance(prior, list) and "--forward-argv" in prior:
+                    position = prior.index("--forward-argv")
+                    length = int(prior[position + 1])
+                    document["notify"] = prior[position + 2 : position + 2 + length]
+                elif isinstance(prior, list) and "--forward" in prior:
                     document["notify"] = json.loads(prior[prior.index("--forward") + 1])
                 else:
                     del document["notify"]
         elif not uninstall:
-            if prior is not None and (not isinstance(prior, list) or not all(isinstance(v, str) for v in prior)):
+            if prior is not None and (
+                not isinstance(prior, list) or not all(isinstance(v, str) for v in prior)
+            ):
                 raise ValueError("Existing notify is not an argv array")
             command = shim_command(adapter.id)
             if prior:
-                command += ["--forward", json.dumps(prior)]
+                command += ["--forward-argv", str(len(prior)), *prior]
             document["notify"] = command
         after = tomlkit.dumps(document)
         tomlkit.parse(after)
@@ -87,7 +119,19 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
                 if entries or not group.get("hooks"):
                     rebuilt.append({**group, "hooks": entries})
             if not uninstall and not found:
-                rebuilt.append({"matcher": "*", "hooks": [{"type": "command", "command": shlex.join([*shim_command(adapter.id), "--event", event])}]})
+                rebuilt.append(
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": shlex.join(
+                                    [*shim_command(adapter.id), "--event", event]
+                                ),
+                            }
+                        ],
+                    }
+                )
             if rebuilt:
                 hooks[event] = rebuilt
             elif event in hooks:
@@ -100,7 +144,14 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
         if before and json.loads(before) == document_json:
             after = before
     changed = before != after
-    diff = "".join(difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), fromfile=str(path), tofile=str(path)))
+    diff = "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=str(path),
+            tofile=str(path),
+        )
+    )
     if changed and not dry_run:
         if before:
             suffix = now().replace(":", "-")

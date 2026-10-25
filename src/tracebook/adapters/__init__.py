@@ -1,4 +1,5 @@
 """Adapters are discovered through installed Python entry points."""
+
 from __future__ import annotations
 
 from importlib.metadata import entry_points

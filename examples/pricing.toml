@@ -1,0 +1,15 @@
+# All rates are USD per million tokens. Example values are deliberately omitted.
+# Add rates from your provider contract; Tracebook never downloads pricing.
+as_of = "2026-10-24"
+
+# [models."provider/exact-model-id"]
+# aliases = ["exact-model-id"]
+# input = 0.0
+# output = 0.0
+# cache_read = 0.0
+# cache_write = 0.0
+# reasoning = 0.0
+# [[models."provider/exact-model-id".tiers]]
+# above_input_tokens = 200000
+# input = 0.0
+# output = 0.0

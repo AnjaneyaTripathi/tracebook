@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from tracebook.platform import home
 
 
 def field(record: Json, path: str) -> object:
+    if path in record:
+        return record[path]
     value: object = record
     for key in path.split("."):
         value = obj(value).get(key)
@@ -20,19 +23,55 @@ class GenericAdapter(Adapter):
     display_name = "Generic / process wrapper"
 
     def root(self) -> Path:
-        return home()
+        return self.state_root or home()
+
+    def map_otel(self, logs: list[Json], metrics: list[Json]) -> Iterable[Event]:
+        path = self.root() / "otel-mappings.toml"
+        mappings = obj(tomllib.loads(path.read_text()).get("services")) if path.exists() else {}
+        for record in logs:
+            mapping = obj(mappings.get(str(record.get("service.name", ""))))
+            if mapping:
+                for event in self.parse_record(record, {"mapping": mapping}):
+                    event.source = "otel"
+                    yield event
+            else:
+                yield from super().map_otel([record], [])
+        yield from super().map_otel([], metrics)
 
     def capabilities(self) -> Capabilities:
-        return Capabilities(transcripts="partial", otel_logs="partial", otel_metrics="partial", token_input="partial", token_output="partial", prompt_text="partial", tool_io_content="partial")
+        return Capabilities(
+            transcripts="partial",
+            otel_logs="partial",
+            otel_metrics="partial",
+            token_input="partial",
+            token_output="partial",
+            prompt_text="partial",
+            tool_io_content="partial",
+        )
 
     def transcript_sources(self) -> list[Source]:
         return []
 
     def parse_record(self, record: Json, state: Json) -> Iterable[Event]:
         mapping = obj(state.get("mapping"))
-        mapped = {k: field(record, str(v)) for k, v in obj(mapping.get("fields")).items()} if mapping else record
+        mapped = (
+            {k: field(record, str(v)) for k, v in obj(mapping.get("fields")).items()}
+            if mapping
+            else record
+        )
         state["session_id"] = str(mapped.get("session_id") or state.get("session_id", "generic"))
         state["turn_id"] = mapped.get("turn_id")
         kind = str(mapped.get("kind", "warning"))
         kind = str(obj(mapping.get("kinds")).get(kind, kind))
-        yield self.event({"timestamp": mapped.get("ts", mapped.get("timestamp"))}, state, kind if kind in KINDS else "warning", mapped.get("native_id") or mapped.get("id") or digest(record), obj(mapped.get("data")) or {k: v for k, v in mapped.items() if k not in {"session_id", "turn_id", "kind", "ts", "id", "native_id"}})
+        yield self.event(
+            {"timestamp": mapped.get("ts", mapped.get("timestamp"))},
+            state,
+            kind if kind in KINDS else "warning",
+            mapped.get("native_id") or mapped.get("id") or digest(record),
+            obj(mapped.get("data"))
+            or {
+                k: v
+                for k, v in mapped.items()
+                if k not in {"session_id", "turn_id", "kind", "ts", "id", "native_id"}
+            },
+        )
