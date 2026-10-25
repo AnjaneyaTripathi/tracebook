@@ -48,6 +48,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+faulthandler_timeout = 30
 
 [tool.coverage.run]
 source = ["tracebook"]
