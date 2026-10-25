@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -266,3 +267,17 @@ def test_invalid_configuration_rejected(tmp_path, text):
     (tmp_path / "config.toml").write_text(text)
     with pytest.raises((ValueError, TypeError, re.error)):
         Config.load(tmp_path)
+
+
+def test_full_history_codex_variants_are_mapped(store):
+    from tracebook.testing import conform
+
+    path = Path("tests/fixtures/codex/0.164.0/additional-records.jsonl")
+    adapter = adapters()["codex"]
+    events = conform(adapter, [path], complete=False)
+    assert not any(event.kind == "warning" for event in events)
+    assert {"tool_call", "tool_result", "subagent", "lifecycle"} <= {e.kind for e in events}
+    with store.transaction():
+        for event in events:
+            store.ingest(event)
+    assert store.rows("SELECT * FROM tool_calls WHERE tool='mcp'")[0]["duration_ms"] is not None

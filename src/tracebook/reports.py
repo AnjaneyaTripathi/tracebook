@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import smtplib
@@ -37,6 +38,8 @@ def report(
     end: str,
     enqueue: bool = True,
 ) -> Json:
+    datetime.fromisoformat(start.replace("Z", "+00:00"))
+    datetime.fromisoformat(end.replace("Z", "+00:00"))
     start, end = utc(start), utc(end)
     if start >= end:
         raise ValueError("Report start must be before end")
@@ -130,79 +133,123 @@ def report(
     return {**data, "body": body}
 
 
-def deliver(store: Store, config: Config, at: str | None = None) -> int:
-    stamp = at or now()
-    pending = store.rows(
-        "SELECT o.*,r.body FROM outbox o JOIN reports r ON r.id=o.report_id WHERE o.status='pending' AND o.next_attempt<=? ORDER BY o.next_attempt LIMIT 20",
-        (stamp,),
+def pending(store: Store, config: Config, at: str | None = None) -> list[Json]:
+    return [
+        item
+        for item in store.rows(
+            "SELECT o.*,r.body FROM outbox o JOIN reports r ON r.id=o.report_id WHERE o.status='pending' AND o.next_attempt<=? ORDER BY o.next_attempt LIMIT 20",
+            (at or now(),),
+        )
+        if obj(config.delivery.get(item["channel"])).get("enabled")
+    ]
+
+
+def send_delivery(item: Json, config: Config) -> None:
+    settings = obj(config.delivery.get(item["channel"]))
+    if item["channel"] == "file":
+        directory = Path(str(settings.get("directory", config.root / "delivered"))).expanduser()
+        atomic_write(directory / f"{item['report_id']}.md", item["body"])
+    elif item["channel"] == "webhook":
+        url = str(settings.get("url", ""))
+        if not url.startswith("https://"):
+            raise ValueError("Webhook delivery requires HTTPS")
+        headers = {"Content-Type": "application/json", "Idempotency-Key": item["id"]}
+        token = os.environ.get(str(settings.get("token_env", "TRACEBOOK_WEBHOOK_TOKEN")))
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        request = urllib.request.Request(
+            url,
+            encode({"id": item["report_id"], "text": item["body"]}).encode(),
+            headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status >= 300:
+                raise ValueError(f"Delivery HTTP status {response.status}")
+    elif item["channel"] == "smtp":
+        message = EmailMessage()
+        message["From"] = str(settings["from"])
+        message["To"] = str(settings["to"])
+        message["Subject"] = "Tracebook nightly report"
+        message["Message-ID"] = (
+            f"<{hashlib.sha256(item['id'].encode()).hexdigest()}@tracebook.local>"
+        )
+        message.set_content(item["body"])
+        with smtplib.SMTP(
+            str(settings["host"]), int(settings.get("port", 587)), timeout=15
+        ) as client:
+            client.starttls(context=ssl.create_default_context())
+            if settings.get("username"):
+                client.login(
+                    str(settings["username"]),
+                    os.environ[str(settings.get("password_env", "TRACEBOOK_SMTP_PASSWORD"))],
+                )
+            client.send_message(message)
+    else:
+        raise ValueError("Unknown delivery channel")
+
+
+def settle(store: Store, item: Json, error: str | None) -> int:
+    if error:
+        attempts = item["attempts"] + 1
+        retry = utc(
+            (
+                datetime.now(UTC) + timedelta(seconds=min(86400, 30 * 2 ** min(attempts, 12)))
+            ).isoformat()
+        )
+        # Errors never include URLs, credentials or response bodies.
+        store.db.execute(
+            "UPDATE outbox SET attempts=?,next_attempt=?,last_error=? WHERE id=?",
+            (attempts, retry, error, item["id"]),
+        )
+        return 0
+    store.db.execute(
+        "UPDATE outbox SET status='sent',attempts=attempts+1,last_error=NULL WHERE id=?",
+        (item["id"],),
     )
+    return 1
+
+
+def deliver(store: Store, config: Config, at: str | None = None) -> int:
     delivered = 0
-    for item in pending:
-        settings = obj(config.delivery.get(item["channel"]))
-        if not settings.get("enabled"):
-            continue
+    for item in pending(store, config, at):
+        error = None
         try:
-            if item["channel"] == "file":
-                directory = Path(
-                    str(settings.get("directory", config.root / "delivered"))
-                ).expanduser()
-                atomic_write(directory / f"{item['report_id']}.md", item["body"])
-            elif item["channel"] == "webhook":
-                url = str(settings.get("url", ""))
-                if not url.startswith("https://"):
-                    raise ValueError("Webhook delivery requires HTTPS")
-                headers = {"Content-Type": "application/json", "Idempotency-Key": item["id"]}
-                token = os.environ.get(str(settings.get("token_env", "TRACEBOOK_WEBHOOK_TOKEN")))
-                if token:
-                    headers["Authorization"] = "Bearer " + token
-                request = urllib.request.Request(
-                    url,
-                    encode({"id": item["report_id"], "text": item["body"]}).encode(),
-                    headers,
-                    method="POST",
-                )
-                with urllib.request.urlopen(request, timeout=15) as response:
-                    if response.status >= 300:
-                        raise ValueError(f"Delivery HTTP status {response.status}")
-            elif item["channel"] == "smtp":
-                message = EmailMessage()
-                message["From"] = str(settings["from"])
-                message["To"] = str(settings["to"])
-                message["Subject"] = "Tracebook nightly report"
-                message["Message-ID"] = (
-                    f"<{hashlib.sha256(item['id'].encode()).hexdigest()}@tracebook.local>"
-                )
-                message.set_content(item["body"])
-                with smtplib.SMTP(
-                    str(settings["host"]), int(settings.get("port", 587)), timeout=15
-                ) as client:
-                    client.starttls(context=ssl.create_default_context())
-                    if settings.get("username"):
-                        client.login(
-                            str(settings["username"]),
-                            os.environ[
-                                str(settings.get("password_env", "TRACEBOOK_SMTP_PASSWORD"))
-                            ],
-                        )
-                    client.send_message(message)
-            else:
-                raise ValueError("Unknown delivery channel")
+            send_delivery(item, config)
         except (OSError, ValueError, KeyError, smtplib.SMTPException) as exc:
-            attempts = item["attempts"] + 1
-            retry = utc(
-                (
-                    datetime.now(UTC) + timedelta(seconds=min(86400, 30 * 2 ** min(attempts, 12)))
-                ).isoformat()
-            )
-            # Errors never include URLs, credentials or response bodies.
-            store.db.execute(
-                "UPDATE outbox SET attempts=?,next_attempt=?,last_error=? WHERE id=?",
-                (attempts, retry, type(exc).__name__, item["id"]),
-            )
-        else:
-            store.db.execute(
-                "UPDATE outbox SET status='sent',attempts=attempts+1,last_error=NULL WHERE id=?",
-                (item["id"],),
-            )
-            delivered += 1
+            error = type(exc).__name__
+        delivered += settle(store, item, error)
     return delivered
+
+
+async def deliver_async(store: Store, config: Config) -> int:
+    delivered = 0
+    for item in pending(store, config):
+        error = None
+        try:
+            await asyncio.to_thread(send_delivery, item, config)
+        except (OSError, ValueError, KeyError, smtplib.SMTPException) as exc:
+            error = type(exc).__name__
+        # Only transport runs off-thread; SQLite mutations remain on the daemon writer.
+        delivered += settle(store, item, error)
+    return delivered
+
+
+def report_due(
+    store: Store, config: Config, registry: dict[str, Adapter], at: datetime | None = None
+) -> int:
+    start, latest = nightly_window(config, at)
+    state = store.state("nightly-scheduler")
+    cursor = str(state.get("end", start))
+    generated = 0
+    # Catch up in bounded batches after sleep/outages; the cursor survives restarts.
+    while cursor < latest and generated < 31:
+        local = datetime.fromisoformat(cursor.replace("Z", "+00:00")).astimezone(
+            ZoneInfo(config.timezone)
+        )
+        end = min(utc((local + timedelta(days=1)).isoformat()), latest)
+        report(store, config, registry, cursor, end)
+        store.checkpoint("nightly-scheduler", "scheduler", "generic", {"end": end})
+        cursor = end
+        generated += 1
+    return generated

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import plistlib
 import shlex
 import sys
@@ -26,6 +27,18 @@ def install_service(config: Config, dry_run: bool = True) -> Diff:
                 "StandardErrorPath": str(config.root / "daemon.log"),
                 "ProcessType": "Background",
                 "ThrottleInterval": 10,
+                "WorkingDirectory": str(config.root),
+                "Umask": 63,
+                "EnvironmentVariables": {
+                    key: os.environ[key]
+                    for key in (
+                        "CLAUDE_CONFIG_DIR",
+                        "CODEX_HOME",
+                        "GEMINI_CLI_HOME",
+                        "XDG_DATA_HOME",
+                    )
+                    if key in os.environ
+                },
             }
         ).decode()
     elif sys.platform.startswith("linux"):

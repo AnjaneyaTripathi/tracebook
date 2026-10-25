@@ -16,7 +16,7 @@ from tracebook.config import Config
 from tracebook.platform import daemon_lock, private_dir
 from tracebook.pricing import PriceBook
 from tracebook.privacy import Redactor
-from tracebook.reports import deliver, nightly_window, report
+from tracebook.reports import deliver_async, report_due
 from tracebook.store import Store
 
 
@@ -64,22 +64,20 @@ async def _serve(config: Config) -> None:
 
     async def ingest() -> None:
         last_analysis = 0.0
-        last_window = ""
         dirty = True
+        last_revision = -1
         while not stop.is_set():
             try:
                 changed = await capture.poll_async(spool, config.scan_seconds)
-                dirty = dirty or bool(changed)
+                dirty = dirty or bool(changed) or store.revision != last_revision
                 if time.monotonic() - last_analysis > 60:
                     if dirty:
                         PriceBook(config.root / "pricing.toml").apply(store)
                         analyze(store)
                         dirty = False
-                    start, end = nightly_window(config)
-                    if end != last_window:
-                        report(store, config, registry, start, end)
-                        last_window = end
-                    deliver(store, config)
+                        last_revision = store.revision
+                    report_due(store, config, registry)
+                    await deliver_async(store, config)
                     last_analysis = time.monotonic()
             except Exception as exc:
                 # Surface health errors while leaving APIs and later retries alive.

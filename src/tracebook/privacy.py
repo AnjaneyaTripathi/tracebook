@@ -42,16 +42,30 @@ class Redactor:
             return "[depth-limited]"
         if SECRET_KEY.search(key):
             return "[REDACTED]"
-        if not self.capture_content and key in {
-            "prompt",
-            "content",
-            "text",
-            "output",
-            "input",
-            "arguments",
-            "command",
-            "response",
-        }:
+        if (
+            not self.capture_content
+            and isinstance(value, (str, list, dict))
+            and key
+            in {
+                "prompt",
+                "content",
+                "text",
+                "output",
+                "input",
+                "arguments",
+                "command",
+                "response",
+                "tool_input",
+                "tool_response",
+                "prompt_text",
+                "aggregated_output",
+                "last-assistant-message",
+                "unparsed",
+                "payload_raw",
+                "summary",
+                "prompt_response",
+            }
+        ):
             return "[content disabled]"
         if isinstance(value, dict):
             return {str(k): self.clean(v, str(k), depth + 1) for k, v in value.items()}

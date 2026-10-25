@@ -54,9 +54,9 @@ class PriceBook:
         return cost, "estimated_api_value"
 
     def apply(self, store: Store) -> int:
-        rows = store.rows("SELECT * FROM model_calls")
+        count = 0
         with store.transaction():
-            for call in rows:
+            for call in store.iter_rows("SELECT * FROM model_calls"):
                 cost, reason = self.estimate(call)
                 data = json.loads(call["data"])
                 data.update(pricing_as_of=self.as_of, pricing_status=reason)
@@ -64,4 +64,5 @@ class PriceBook:
                     "UPDATE model_calls SET cost_estimated=?,data=? WHERE id=?",
                     (cost, encode(data), call["id"]),
                 )
-        return len(rows)
+                count += 1
+        return count

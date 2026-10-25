@@ -24,6 +24,7 @@ class Config:
     report_hour: int = 23
     timezone: str = "UTC"
     delivery: dict[str, Any] = field(default_factory=dict)
+    metadata_env: list[str] = field(default_factory=list)
 
     @property
     def database(self) -> Path:
@@ -46,6 +47,7 @@ class Config:
                 "report_hour",
                 "timezone",
                 "delivery",
+                "metadata_env",
             ):
                 if key in data:
                     setattr(result, key, data[key])
@@ -72,4 +74,9 @@ class Config:
         ZoneInfo(result.timezone)
         if not isinstance(result.delivery, dict):
             raise ValueError("Delivery must be a table of configured channels")
+        if not isinstance(result.metadata_env, list) or any(
+            not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
+            for key in result.metadata_env
+        ):
+            raise ValueError("metadata_env must list environment variable names")
         return result

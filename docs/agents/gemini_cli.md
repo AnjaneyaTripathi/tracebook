@@ -55,3 +55,10 @@ Sources: [recording types](https://github.com/google-gemini/gemini-cli/blob/cd1b
 [hooks](https://geminicli.com/docs/hooks/reference/),
 [telemetry](https://geminicli.com/docs/cli/telemetry/),
 [configuration](https://geminicli.com/docs/reference/configuration/).
+
+## Local telemetry outfile
+
+The upstream file exporter writes concatenated, pretty-printed SDK log/metric objects,
+not JSONL or OTLP wire envelopes. Tracebook incrementally decodes complete JSON objects
+and retains partial objects for the next read. Log attributes/body/hrTime and metric
+scopeMetrics are normalized before canonical mapping. This path is fixture-tested.

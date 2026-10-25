@@ -11,7 +11,7 @@ def capture() -> None:
     command: list[str] = []
     try:
         args = sys.argv[1:]
-        agent, event = "unknown", ""
+        agent, event, state_home = "unknown", "", ""
         index = 0
         while index < len(args):
             arg = args[index]
@@ -21,12 +21,14 @@ def capture() -> None:
                     raise ValueError("Invalid forward command length")
                 command = args[index + 2 : index + 2 + length]
                 index += 2 + length
-            elif arg in {"--agent", "--event", "--forward"} and index + 1 < len(args):
+            elif arg in {"--agent", "--event", "--forward", "--home"} and index + 1 < len(args):
                 value = args[index + 1]
                 if arg == "--agent":
                     agent = value
                 elif arg == "--event":
                     event = value
+                elif arg == "--home":
+                    state_home = value
                 else:
                     forward = value
                 index += 2
@@ -34,7 +36,7 @@ def capture() -> None:
                 payload_arg = arg
                 index += 1
         raw = payload_arg or (sys.stdin.read(65537) if not sys.stdin.isatty() else "{}")
-        root = os.path.expanduser(os.environ.get("TRACEBOOK_HOME", "~/.tracebook"))
+        root = os.path.expanduser(state_home or os.environ.get("TRACEBOOK_HOME", "~/.tracebook"))
         spool = os.path.join(root, "spool")
         os.makedirs(spool, mode=0o700, exist_ok=True)
         stamp = time.time()

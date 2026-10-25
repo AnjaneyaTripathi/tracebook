@@ -40,8 +40,9 @@ EVENTS = {
 }
 
 
-def shim_command(agent: str) -> list[str]:
-    return [sys.executable, "-S", str(Path(hook.__file__).resolve()), "--agent", agent]
+def shim_command(agent: str, state_home: Path | None = None) -> list[str]:
+    command = [sys.executable, "-S", str(Path(hook.__file__).resolve()), "--agent", agent]
+    return [*command, "--home", str(state_home)] if state_home else command
 
 
 def owned(command: object) -> bool:
@@ -87,7 +88,7 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
                 not isinstance(prior, list) or not all(isinstance(v, str) for v in prior)
             ):
                 raise ValueError("Existing notify is not an argv array")
-            command = shim_command(adapter.id)
+            command = shim_command(adapter.id, adapter.state_root)
             if prior:
                 command += ["--forward-argv", str(len(prior)), *prior]
             document["notify"] = command
@@ -126,7 +127,11 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
                             {
                                 "type": "command",
                                 "command": shlex.join(
-                                    [*shim_command(adapter.id), "--event", event]
+                                    [
+                                        *shim_command(adapter.id, adapter.state_root),
+                                        "--event",
+                                        event,
+                                    ]
                                 ),
                             }
                         ],

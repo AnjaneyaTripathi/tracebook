@@ -28,7 +28,7 @@ yes = supported fixture contract; partial = incomplete or locally unverified; no
 | session_resume_detectable | partial | partial | partial | no | partial |
 
 - Claude Code: installed 2.1.286; transcripts observed 2.1.285
-- OpenAI Codex: locally observed 0.163.0
+- OpenAI Codex: installed 0.163.0; transcripts observed 0.164.0
 - Gemini CLI: unverified
 - Generic / process wrapper: unverified
 - OpenCode: unverified; upstream v2 schema 097a93e5

@@ -1,0 +1,15 @@
+# Save as ~/.tracebook/otel-mappings.toml. Fields reference flattened OTLP attributes.
+[services."example-agent".fields]
+session_id = "session.id"
+turn_id = "prompt.id"
+native_id = "request_id"
+kind = "event.name"
+ts = "event.timestamp"
+model = "model"
+input_uncached = "tokens.input_uncached"
+input_cache_read = "tokens.cache_read"
+output = "tokens.output_nonreasoning"
+reasoning = "tokens.reasoning"
+
+[services."example-agent".kinds]
+"example.usage" = "model_call"

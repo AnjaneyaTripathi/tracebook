@@ -2,8 +2,10 @@
 
 Observed binary: **2.1.286**. Local transcripts: `$CLAUDE_CONFIG_DIR/projects/**/*.jsonl`,
 default `~/.claude/projects`; settings: root `settings.json`. Discovery found
-9 files. `tests/fixtures/claude_code/2.1.286/observed.jsonl` contains sanitized
+9 files. `tests/fixtures/claude_code/2.1.285/observed.jsonl` contains sanitized
 local records, including repeated split assistant message IDs.
+
+The saved transcript identifies version **2.1.285**, independently of the installed binary version.
 
 ## Transcript contract
 

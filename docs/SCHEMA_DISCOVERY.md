@@ -49,3 +49,11 @@ orders events when reading; it does not silently fabricate monotonic wall time.
 The supplied specification ends in section 8. The implementation will use the
 entities and constraints explicitly described in sections 0–7 and document any
 remaining acceptance gaps instead of asserting production readiness prematurely.
+
+## Additional discovery
+
+Saved fixture directories identify the transcript's own version, which differs
+from the current binary: Claude 2.1.285 and Codex 0.164.0. Provenance preserves both
+values. Gemini's telemetry outfile uses concatenated pretty SDK JSON objects, not
+JSONL. OpenCode current upstream uses session_v2/session_message SQLite tables,
+not the original JSON-session hypothesis; see [its discovery](agents/opencode.md).

@@ -33,6 +33,8 @@ class Capture:
         self.last_scan = 0.0
         self.errors: dict[str, str] = {}
         self.since: str | None = None
+        self.unchanged: dict[str, tuple[int, int, int]] = {}
+        self.active_sources: set[str] = set()
 
     def scan(self) -> None:
         self.sources = []
@@ -299,16 +301,39 @@ class Capture:
         return len(events)
 
     def poll_sources(self, spool: Path, scan_seconds: float) -> list[tuple[Adapter, Source]]:
-        if time.monotonic() - self.last_scan > scan_seconds:
+        scanning = time.monotonic() - self.last_scan > scan_seconds
+        if scanning:
             self.scan()
         return [
             *((self.adapters["generic"], Source(str(p), "spool")) for p in spool.glob("*.jsonl")),
-            *self.sources,
+            *(
+                (adapter, source)
+                for adapter, source in self.sources
+                if scanning
+                or source.path in self.active_sources
+                or source.path not in self.unchanged
+                or source.format == "sqlite"
+            ),
         ]
 
     def poll_one(self, adapter: Adapter, source: Source) -> int:
         try:
+            stat = Path(source.path).stat()
+            if stat.st_mtime > time.time() - 120:
+                self.active_sources.add(source.path)
+            else:
+                self.active_sources.discard(source.path)
+            fingerprint = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if (
+                source.format not in {"sqlite", "spool"}
+                and self.unchanged.get(source.path) == fingerprint
+            ):
+                return 0
             count = self.tail(adapter, source)
+            if not count:
+                self.unchanged[source.path] = fingerprint
+            if len(self.unchanged) > 10000:
+                self.unchanged.clear()
             self.errors.pop(source.path, None)
             if source.format == "spool":
                 self.collect_spool(adapter, Path(source.path))

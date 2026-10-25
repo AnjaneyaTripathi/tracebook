@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator
@@ -45,6 +46,40 @@ def process_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def child_tree(pid: int) -> list[dict[str, object]]:
+    """Best-effort POSIX process metadata, without environment or output capture."""
+    if sys.platform == "win32":
+        return []
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,comm="],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+        rows = [line.strip().split(None, 2) for line in result.stdout.splitlines()]
+        parents = {pid}
+        found: dict[int, dict[str, object]] = {}
+        for _ in range(16):
+            additions = {
+                int(row[0]): {"pid": int(row[0]), "parent_pid": int(row[1]), "executable": row[2]}
+                for row in rows
+                if len(row) == 3
+                and row[0].isdigit()
+                and row[1].isdigit()
+                and int(row[1]) in parents
+                and int(row[0]) not in parents
+            }
+            if not additions:
+                break
+            found.update(additions)
+            parents.update(additions)
+        return list(found.values())[:1024]
+    except (OSError, subprocess.TimeoutExpired):
+        return []
 
 
 def private_dir(path: Path) -> Path:

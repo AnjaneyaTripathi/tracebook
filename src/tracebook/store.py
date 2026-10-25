@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import math
 import sqlite3
 import subprocess
 import threading
@@ -51,8 +52,12 @@ CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id,started_at);
 CREATE INDEX IF NOT EXISTS idx_turns_agent ON turns(agent,started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_turn ON model_calls(turn_id,ts);
 CREATE INDEX IF NOT EXISTS idx_calls_session ON model_calls(session_id,ts);
+CREATE INDEX IF NOT EXISTS idx_calls_formats ON model_calls(session_id,turn_id,usage_format);
+CREATE INDEX IF NOT EXISTS idx_calls_agent ON model_calls(agent,ts);
 CREATE INDEX IF NOT EXISTS idx_tools_turn ON tool_calls(turn_id,ts);
+CREATE INDEX IF NOT EXISTS idx_tools_agent ON tool_calls(agent,ts);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id,ts);
+CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent,ts);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind,ts);
 CREATE INDEX IF NOT EXISTS idx_raw_agent ON raw_payloads(agent,received_at);
 CREATE INDEX IF NOT EXISTS idx_findings_time ON findings(ts,severity);
@@ -99,6 +104,7 @@ class Store:
     def __init__(self, path: Path, redactor: Redactor | None = None) -> None:
         private_dir(path.parent)
         self.path = path
+        self.revision = 0
         self.redactor = redactor or Redactor()
         self.db = sqlite3.connect(path, timeout=30, isolation_level=None, check_same_thread=False)
         self._writer_lock = threading.RLock()
@@ -147,6 +153,11 @@ class Store:
         with self.reader() as db:
             return [dict(r) for r in db.execute(sql, params)]
 
+    def iter_rows(self, sql: str, params: tuple[object, ...] = ()) -> Iterator[Json]:
+        with self.reader() as db:
+            for row in db.execute(sql, params):
+                yield dict(row)
+
     def raw(self, agent: str, source: str, record: Json) -> bool:
         self.redactor.begin_record()
         clean = self.redactor.clean(record)
@@ -171,6 +182,7 @@ class Store:
         )
 
     def ingest(self, event: Event) -> None:
+        self.revision += 1
         event.ts = utc(event.ts)
         if event.kind not in KINDS:
             event.data["reason"] = "unknown_canonical_kind"
@@ -179,6 +191,13 @@ class Store:
             for key in TOKEN_FIELDS:
                 if key in event.data:
                     event.data[key] = number(event.data[key])
+            for key in ("cost_reported", "cost_estimated"):
+                if event.data.get(key) is not None:
+                    try:
+                        cost = float(event.data[key])
+                        event.data[key] = cost if math.isfinite(cost) and cost >= 0 else None
+                    except (TypeError, ValueError):
+                        event.data[key] = None
         if "tool" in event.data and event.data["tool"] not in TOOLS:
             event.data["tool"] = "other"
         if "status" in event.data and event.data["status"] not in STATUSES:
@@ -211,11 +230,16 @@ class Store:
         old = self.db.execute(
             "SELECT data,provenance,ts,turn_id FROM events WHERE id=?", (event_id,)
         ).fetchone()
-        if not old and event.kind == "turn_start" and event.data.get("prompt"):
+        if (
+            not old
+            and event.ts != "1970-01-01T00:00:00.000Z"
+            and event.kind == "turn_start"
+            and event.data.get("prompt")
+        ):
             opposite = "hook" if event.source == "transcript" else "transcript"
             candidates = self.db.execute(
-                "SELECT id FROM events WHERE session_id=? AND kind='turn_start' AND json_extract(data,'$.prompt')=? AND ABS((julianday(ts)-julianday(?))*86400)<=5 AND json_extract(provenance,'$.prompt.source')=?",
-                (sid, event.data["prompt"], event.ts, opposite),
+                "SELECT id FROM events WHERE session_id=? AND kind='turn_start' AND json_extract(data,'$.prompt')=? AND ts BETWEEN strftime('%Y-%m-%dT%H:%M:%fZ',?,'-5 seconds') AND strftime('%Y-%m-%dT%H:%M:%fZ',?,'+5 seconds') AND json_extract(provenance,'$.prompt.source')=?",
+                (sid, event.data["prompt"], event.ts, event.ts, opposite),
             ).fetchall()
             if len(candidates) == 1:
                 event_id = candidates[0][0]
@@ -236,10 +260,15 @@ class Store:
             if len(latest) == 1:
                 tid = latest[0][0]
                 event.data["correlation_confidence"] = "session_active_turn"
-        if not old and event.source == "transcript" and event.kind == "model_call":
+        if (
+            not old
+            and event.ts != "1970-01-01T00:00:00.000Z"
+            and event.source == "transcript"
+            and event.kind == "model_call"
+        ):
             candidates = self.db.execute(
-                "SELECT id FROM events WHERE session_id=? AND kind='model_call' AND json_extract(data,'$.model') IS ? AND ABS((julianday(ts)-julianday(?))*86400)<=2 AND NOT EXISTS (SELECT 1 FROM json_each(events.provenance) p WHERE json_extract(p.value,'$.source')='transcript')",
-                (sid, event.data.get("model"), event.ts),
+                "SELECT id FROM events WHERE session_id=? AND kind='model_call' AND json_extract(data,'$.model') IS ? AND ts BETWEEN strftime('%Y-%m-%dT%H:%M:%fZ',?,'-2 seconds') AND strftime('%Y-%m-%dT%H:%M:%fZ',?,'+2 seconds') AND NOT EXISTS (SELECT 1 FROM json_each(events.provenance) p WHERE json_extract(p.value,'$.source')='transcript')",
+                (sid, event.data.get("model"), event.ts, event.ts),
             ).fetchall()
             if len(candidates) == 1:
                 event_id = candidates[0][0]
@@ -253,12 +282,17 @@ class Store:
                         "UPDATE model_calls SET usage_format='uncorrelated_telemetry' WHERE id=?",
                         (candidate[0],),
                     )
-        if not old and event.source == "otel" and event.kind == "model_call":
+        if (
+            not old
+            and event.ts != "1970-01-01T00:00:00.000Z"
+            and event.source == "otel"
+            and event.kind == "model_call"
+        ):
             # A unique nearby transcript call may enrich telemetry lacking a shared ID.
             # Ambiguous candidates remain separate, explicitly excluded from usage totals.
             candidates = self.db.execute(
-                "SELECT id FROM events WHERE session_id=? AND kind='model_call' AND json_extract(data,'$.model') IS ? AND ABS((julianday(ts)-julianday(?))*86400)<=2 AND json_extract(provenance,'$.model.source')='transcript'",
-                (sid, event.data.get("model"), event.ts),
+                "SELECT id FROM events WHERE session_id=? AND kind='model_call' AND json_extract(data,'$.model') IS ? AND ts BETWEEN strftime('%Y-%m-%dT%H:%M:%fZ',?,'-2 seconds') AND strftime('%Y-%m-%dT%H:%M:%fZ',?,'+2 seconds') AND json_extract(provenance,'$.model.source')='transcript'",
+                (sid, event.data.get("model"), event.ts, event.ts),
             ).fetchall()
             if len(candidates) == 1:
                 event_id = candidates[0][0]

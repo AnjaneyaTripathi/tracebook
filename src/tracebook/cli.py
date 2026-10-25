@@ -19,7 +19,7 @@ from tracebook.analysis import analyze
 from tracebook.capture import Capture
 from tracebook.config import Config
 from tracebook.model import Event, now, utc
-from tracebook.platform import atomic_write, private_dir
+from tracebook.platform import atomic_write, child_tree, private_dir
 from tracebook.pricing import PriceBook
 from tracebook.privacy import Redactor
 from tracebook.reports import deliver, report
@@ -108,6 +108,7 @@ def daemon(ctx: typer.Context) -> None:
 
 @app.command("install-hooks")
 def install_hooks(
+    ctx: typer.Context,
     agent: Annotated[str, typer.Option()] = "all",
     apply: Annotated[
         bool, typer.Option("--apply", help="Write config after making a timestamped backup")
@@ -119,6 +120,7 @@ def install_hooks(
         raise typer.BadParameter("Unknown adapter")
     for key, adapter in registry.items():
         if key == agent or (agent == "all" and adapter.detect() is not None):
+            adapter.state_root = configuration(ctx).root
             diff = adapter.install_hooks(dry_run=not apply)
             typer.echo(diff.text or f"{key}: already configured")
 
@@ -165,6 +167,8 @@ def backfill(
         raise typer.BadParameter("Unknown adapter")
     store = open_store(config)
     capture = Capture(store, registry)
+    if since:
+        datetime.fromisoformat(since.replace("Z", "+00:00"))
     capture.since = utc(since) if since else None
     total = 0
     try:
@@ -249,37 +253,15 @@ def make_report(
 
 
 @app.command("otel-env")
-def otel_env(agent: Annotated[str, typer.Option()]) -> None:
-    """Print local-only OTel configuration with content logging disabled."""
-    if agent == "claude_code":
-        values = {
-            "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-            "OTEL_LOGS_EXPORTER": "otlp",
-            "OTEL_METRICS_EXPORTER": "otlp",
-            "OTEL_LOG_USER_PROMPTS": "0",
-            "OTEL_LOG_TOOL_DETAILS": "0",
-            "OTEL_LOG_ASSISTANT_RESPONSES": "0",
-        }
-    elif agent == "gemini_cli":
-        values = {
-            "GEMINI_TELEMETRY_ENABLED": "true",
-            "GEMINI_TELEMETRY_TARGET": "local",
-            "GEMINI_TELEMETRY_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-            "GEMINI_TELEMETRY_OTLP_PROTOCOL": "http",
-            "GEMINI_TELEMETRY_LOG_PROMPTS": "false",
-            "GEMINI_TELEMETRY_TRACES_ENABLED": "false",
-        }
-    elif agent == "codex":
-        typer.echo(
-            '# Merge into user config.toml; do not create a duplicate [otel] table.\n[otel]\nlog_user_prompt = false\nexporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol = "binary" } }\n# Existing analytics settings are left unchanged.'
-        )
-        return
-    else:
-        raise typer.BadParameter("Select claude_code, codex or gemini_cli")
-    typer.echo("\n".join(f"export {key}={value}" for key, value in values.items()))
-    typer.echo("# Content logging is disabled. Transcript capture still follows capture_content.")
+def otel_env(ctx: typer.Context, agent: Annotated[str, typer.Option()]) -> None:
+    """Print the selected adapter's local OTel setup without exposing content."""
+    registry = adapters()
+    if agent not in registry:
+        raise typer.BadParameter("Unknown adapter")
+    typer.echo(registry[agent].otel_setup(f"http://127.0.0.1:{configuration(ctx).otlp_port}"))
+    typer.echo(
+        "# Content logging is disabled for built-in Tier 1 adapters. Transcript capture follows capture_content."
+    )
 
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -295,6 +277,7 @@ def run(ctx: typer.Context) -> None:
     started = time.monotonic_ns()
     timestamp = now()
     code = 127
+    children: dict[object, dict[str, object]] = {}
     try:
         with store.transaction():
             store.ingest(
@@ -334,13 +317,23 @@ def run(ctx: typer.Context) -> None:
                         "cwd": os.getcwd(),
                         "coverage": "process_only",
                         "monotonic_ns": started,
+                        "environment": {
+                            key: os.environ[key]
+                            for key in configuration(ctx).metadata_env
+                            if key in os.environ
+                        },
                     },
                 )
             )
         try:
             child = subprocess.Popen(command)
             try:
-                code = child.wait()
+                while True:
+                    try:
+                        code = child.wait(timeout=0.5)
+                        break
+                    except subprocess.TimeoutExpired:
+                        children.update((row["pid"], row) for row in child_tree(child.pid))
             except KeyboardInterrupt:
                 child.send_signal(2)
                 code = child.wait()
@@ -358,7 +351,13 @@ def run(ctx: typer.Context) -> None:
                     identity + ":end",
                     identity,
                     "process",
-                    {"exit_code": code, "duration_ms": duration, "coverage": "process_only"},
+                    {
+                        "exit_code": code,
+                        "duration_ms": duration,
+                        "coverage": "process_only",
+                        "children": list(children.values()),
+                        "child_tree_coverage": "best_effort_poll_500ms",
+                    },
                 )
             )
             store.ingest(

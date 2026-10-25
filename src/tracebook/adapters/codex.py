@@ -32,7 +32,7 @@ class CodexAdapter(Adapter):
     id = "codex"
     display_name = "OpenAI Codex"
     binary = "codex"
-    verification = "locally observed 0.163.0"
+    verification = "installed 0.163.0; transcripts observed 0.164.0"
     otel_services = ("codex", "codex_cli", "codex-cli")
     otel_token_fields = {
         "input_uncached": "input_token_count",
@@ -193,6 +193,27 @@ class CodexAdapter(Adapter):
                 )
             elif sub == "item_completed":
                 yield from self.item(record, payload, state)
+            elif sub in {"mcp_tool_call_end", "patch_apply_end", "web_search_end"}:
+                yield from self.tool_end(record, payload, state)
+            elif sub == "sub_agent_activity":
+                yield self.event(
+                    record,
+                    state,
+                    "subagent",
+                    payload.get("event_id"),
+                    {
+                        "child_session_id": payload.get("agent_thread_id"),
+                        "agent_path": payload.get("agent_path"),
+                        "activity": payload.get("kind"),
+                    },
+                )
+            elif sub == "thread_rolled_back":
+                yield self.event(
+                    record,
+                    state,
+                    "lifecycle",
+                    data={"native_type": sub, "rolled_back_turns": payload.get("num_turns")},
+                )
             elif sub in {
                 "agent_message",
                 "agent_reasoning",
@@ -227,8 +248,10 @@ class CodexAdapter(Adapter):
                     state["turn_id"],
                     {"prompt": prompt, "kind": "command" if prompt.startswith("/") else "prompt"},
                 )
-            elif sub in {"function_call", "custom_tool_call"}:
-                name = str(payload.get("name", "unknown"))
+            elif sub in {"function_call", "custom_tool_call", "tool_search_call"}:
+                name = str(
+                    payload.get("name", "tool_search" if sub == "tool_search_call" else "unknown")
+                )
                 yield self.event(
                     record,
                     state,
@@ -240,13 +263,13 @@ class CodexAdapter(Adapter):
                         "input": tool_input(payload.get("arguments", payload.get("input"))),
                     },
                 )
-            elif sub in {"function_call_output", "custom_tool_call_output"}:
+            elif sub in {"function_call_output", "custom_tool_call_output", "tool_search_output"}:
                 yield self.event(
                     record,
                     state,
                     "tool_result",
                     payload.get("call_id"),
-                    {"output": payload.get("output"), "status": "unknown"},
+                    {"output": payload.get("output", payload.get("tools")), "status": "unknown"},
                 )
             elif sub in {"message", "reasoning", "agent_message", "additional_tools"}:
                 yield self.event(record, state, "lifecycle", data={"native_type": sub})
@@ -330,7 +353,93 @@ class CodexAdapter(Adapter):
             )
         elif kind == "ContextCompaction":
             yield self.event(record, state, "compaction", native)
-        elif kind in {"AgentMessage", "Reasoning", "ImageView", "Extension"}:
+        elif kind == "FunctionCallOutput":
+            yield self.event(
+                record,
+                state,
+                "tool_result",
+                native,
+                {
+                    "native_name": item.get("name"),
+                    "output": item.get("output"),
+                    "status": "unknown",
+                },
+            )
+        elif kind in {"AgentMessage", "Reasoning", "ImageView", "Extension", "Plan"}:
             yield self.event(record, state, "lifecycle", native, {"native_type": kind})
         else:
             yield self.event(record, state, "warning", native, {"native_type": kind})
+
+    def tool_end(self, record: Json, payload: Json, state: Json) -> Iterable[Event]:
+        kind, native = payload.get("type"), payload.get("call_id")
+        if kind == "mcp_tool_call_end":
+            invocation, result = obj(payload.get("invocation")), obj(payload.get("result"))
+            success = obj(result.get("Ok"))
+            duration = obj(payload.get("duration"))
+            yield self.event(
+                record,
+                state,
+                "tool_call",
+                native,
+                {
+                    "tool": "mcp",
+                    "native_name": str(invocation.get("server", ""))
+                    + "."
+                    + str(invocation.get("tool", "unknown")),
+                    "input": tool_input(invocation.get("arguments")),
+                },
+            )
+            yield self.event(
+                record,
+                state,
+                "tool_result",
+                native,
+                {
+                    "output": success.get("content", result.get("Err")),
+                    "status": "error" if "Err" in result or success.get("isError") else "completed",
+                    "duration_ms": (duration.get("secs", 0) * 1000 + duration.get("nanos", 0) / 1e6)
+                    if duration
+                    else None,
+                },
+            )
+        elif kind == "patch_apply_end":
+            yield self.event(
+                record,
+                state,
+                "tool_result",
+                native,
+                {
+                    "output": {
+                        "stdout": payload.get("stdout"),
+                        "stderr": payload.get("stderr"),
+                        "changes": payload.get("changes"),
+                    },
+                    "status": "completed"
+                    if payload.get("success") is True
+                    else "error"
+                    if payload.get("success") is False
+                    else "unknown",
+                },
+            )
+        else:
+            yield self.event(
+                record,
+                state,
+                "tool_call",
+                native,
+                {
+                    "tool": "web_search",
+                    "native_name": "web_search",
+                    "input": {"pattern": payload.get("query"), "action": payload.get("action")},
+                },
+            )
+            yield self.event(record, state, "tool_result", native, {"status": "completed"})
+
+    def otel_setup(self, endpoint: str) -> str:
+        return (
+            "# Merge into user config.toml; do not duplicate an existing [otel] table.\n"
+            "[otel]\nlog_user_prompt = false\n"
+            'exporter = { otlp-http = { endpoint = "'
+            + endpoint
+            + '/v1/logs", protocol = "binary" } }\n'
+        )

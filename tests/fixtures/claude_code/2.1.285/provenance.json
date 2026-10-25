@@ -1,7 +1,8 @@
 {
-  "agent": "codex",
-  "installed_version": "0.163.0",
+  "agent": "claude_code",
+  "installed_version": "2.1.286",
   "verification": "local observed schema; all content and identifiers replaced",
   "observed_at": "2026-10-24",
-  "records": 99
+  "records": 100,
+  "transcript_version": "2.1.285"
 }

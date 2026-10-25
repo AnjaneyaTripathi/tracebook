@@ -12,6 +12,14 @@ class GeminiAdapter(Adapter):
     id = "gemini_cli"
     display_name = "Gemini CLI"
     binary = "gemini"
+    otel_environment = {
+        "GEMINI_TELEMETRY_ENABLED": "true",
+        "GEMINI_TELEMETRY_TARGET": "local",
+        "GEMINI_TELEMETRY_OTLP_ENDPOINT": "{endpoint}",
+        "GEMINI_TELEMETRY_OTLP_PROTOCOL": "http",
+        "GEMINI_TELEMETRY_LOG_PROMPTS": "false",
+        "GEMINI_TELEMETRY_TRACES_ENABLED": "false",
+    }
     otel_services = ("gemini-cli", "gemini_cli")
     otel_token_fields = {
         "input_uncached": "input_token_count",

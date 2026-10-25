@@ -3,7 +3,7 @@
 Observed binary: **0.163.0**. `$CODEX_HOME` defaults to `~/.codex`;
 user config is `config.toml`, rollouts are `sessions/**/*.jsonl` (also inspect
 archived_sessions). `history.jsonl` is not the rich rollout. 599 session files
-were present. Sanitized observed records are in `tests/fixtures/codex/0.163.0/`.
+were present. Sanitized observed records are in `tests/fixtures/codex/0.164.0/`.
 
 ## Records and boundaries
 
@@ -62,3 +62,16 @@ Reported cost: false absent upstream evidence.
 Sources checked 2026-10-24:
 [advanced config](https://learn.chatgpt.com/docs/config-file/config-advanced),
 [config reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+## Full-history discovery follow-up
+
+A full local backfill exposed additional variants saved in `additional-records.jsonl`
+(all text, paths and identifiers replaced): mcp_tool_call_end has call_id, invocation
+(server/tool/arguments), duration (secs/nanos), and result.Ok.content/isError or an
+error alternative. patch_apply_end carries call_id, changes, stdout/stderr, success
+and status. web_search_end has call_id and action/query. sub_agent_activity has
+agent_thread_id, event_id, occurred_at_ms and kind. Response-item tool_search_call
+and tool_search_output share call_id. Typed Plan is lifecycle evidence; typed
+FunctionCallOutput supplies id/name/namespace/output. thread_rolled_back records
+num_turns and must not erase already-captured evidence. These observations extend
+the initial sampled schema; unknown variants continue to be retained as warnings.

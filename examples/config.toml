@@ -5,6 +5,7 @@ scan_seconds = 30.0
 billing_mode = "mixed"
 capture_content = true
 redact_patterns = []
+metadata_env = []
 timezone = "UTC"
 report_hour = 23
 

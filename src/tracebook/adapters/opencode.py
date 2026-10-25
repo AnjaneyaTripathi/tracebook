@@ -105,7 +105,14 @@ class OpenCodeAdapter(Adapter):
                 state,
                 "turn_start",
                 state["turn_id"],
-                {"prompt": prompt, "kind": "command" if prompt.startswith("/") else "prompt"},
+                {
+                    "prompt": prompt,
+                    "kind": "command"
+                    if prompt.startswith("/")
+                    else "sidechain"
+                    if record.get("parent_id")
+                    else "prompt",
+                },
             )
         elif typ == "assistant":
             tokens, model = obj(record.get("tokens")), obj(record.get("model"))

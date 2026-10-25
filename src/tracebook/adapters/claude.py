@@ -13,6 +13,14 @@ class ClaudeAdapter(Adapter):
     display_name = "Claude Code"
     binary = "claude"
     verification = "installed 2.1.286; transcripts observed 2.1.285"
+    otel_environment = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{endpoint}",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOG_USER_PROMPTS": "0",
+    }
     otel_services = ("claude-code", "claude_code")
     otel_token_fields = {
         "input_uncached": "input_tokens",
@@ -115,6 +123,8 @@ class ClaudeAdapter(Adapter):
                     "prompt": prompt,
                     "kind": "command"
                     if prompt.startswith("/") or "<command-name>" in prompt
+                    else "sidechain"
+                    if record.get("isSidechain")
                     else "prompt",
                     "sidechain": bool(record.get("isSidechain")),
                     "aliases": [record.get("uuid")],

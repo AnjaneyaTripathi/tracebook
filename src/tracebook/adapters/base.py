@@ -88,6 +88,7 @@ class Adapter(ABC):
     state_root: Path | None = None
     otel_services: tuple[str, ...] = ()
     otel_token_fields: dict[str, str] = {}
+    otel_environment: dict[str, str] = {}
     input_includes_cache = False
     output_includes_reasoning = False
 
@@ -251,3 +252,15 @@ class Adapter(ABC):
 
     def database_records(self, database: sqlite3.Connection, state: Json) -> Iterable[Json]:
         yield {"type": "unsupported_database_schema"}
+
+    def otel_setup(self, endpoint: str) -> str:
+        import shlex
+
+        values = self.otel_environment or {
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "{endpoint}",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        }
+        return "\n".join(
+            f"export {key}={shlex.quote(value.replace('{endpoint}', endpoint))}"
+            for key, value in values.items()
+        )
