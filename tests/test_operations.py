@@ -133,3 +133,21 @@ def test_content_disabled_preserves_numeric_usage_and_rejects_bad_cost(tmp_path)
     assert "private" not in str(store.rows("SELECT * FROM raw_payloads"))
     assert "private" not in str(store.rows("SELECT * FROM model_calls"))
     store.close()
+
+
+def test_outbox_claim_excludes_concurrent_sender_and_recovers_expired_lease(tmp_path):
+    from tracebook.reports import claim, pending
+
+    path = tmp_path / "db.sqlite3"
+    first, second = Store(path), Store(path)
+    config = Config(root=tmp_path, delivery={"file": {"enabled": True}})
+    report_due(first, config, adapters())
+    item = pending(first, config)[0]
+    assert claim(first, item)
+    assert not claim(second, item)
+    assert pending(second, config) == []
+    first.db.execute("UPDATE outbox SET next_attempt=?", (utc(1),))
+    recovered = pending(second, config)
+    assert len(recovered) == 1 and claim(second, recovered[0])
+    first.close()
+    second.close()

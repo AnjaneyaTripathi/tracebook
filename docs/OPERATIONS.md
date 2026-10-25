@@ -49,7 +49,9 @@ Default delivery is a private local `delivered/` directory. HTTPS webhook and
 STARTTLS SMTP delivery require explicit enabled settings. Credentials are read
 from named environment variables and are never stored in report errors. Ensure
 your service manager passes those variables if you enable external delivery.
-Retries use durable exponential backoff, capped at a day. The outbox does not send
+Concurrent daemon/CLI deliveries claim outbox entries atomically; abandoned
+claims become retryable after five minutes. Retries use durable exponential
+backoff, capped at a day. The outbox does not send
 a previously acknowledged report twice merely because its window was rerun.
 Webhook receivers should honor `Idempotency-Key`. SMTP gets a stable Message-ID,
 but external delivery is at-least-once: an acknowledgement lost during a crash

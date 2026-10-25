@@ -7,7 +7,7 @@ Local validation on macOS / Python 3.12.13:
   replay/rotation/partial lines, WAL snapshots, hook silence, secrets, pricing,
   every detector, API/OTLP, scheduler/DST, outbox retries and daemon lifecycle.
 - Coverage gate is 85% across the package, including branches; recent local run
-  is approximately 92% with 65 tests. CI runs the same checks on Linux and macOS.
+  is approximately 92% with 66 tests. CI runs the same checks on Linux and macOS.
 - Three Chromium/Chrome browser tests exercise desktop/mobile rendering, session
   filtering, tool IO, provenance, capabilities and report generation. Screenshots
   were inspected using isolated, labeled synthetic data. No runtime user data is

@@ -143,6 +143,10 @@ def report(
 
 
 def pending(store: Store, config: Config, at: str | None = None) -> list[Json]:
+    store.db.execute(
+        "UPDATE outbox SET status='pending' WHERE status='sending' AND next_attempt<=?",
+        (at or now(),),
+    )
     return [
         item
         for item in store.rows(
@@ -151,6 +155,17 @@ def pending(store: Store, config: Config, at: str | None = None) -> list[Json]:
         )
         if obj(config.delivery.get(item["channel"])).get("enabled")
     ]
+
+
+def claim(store: Store, item: Json, at: str | None = None) -> bool:
+    lease = utc((datetime.now(UTC) + timedelta(minutes=5)).isoformat())
+    return (
+        store.db.execute(
+            "UPDATE outbox SET status='sending',next_attempt=? WHERE id=? AND status='pending' AND next_attempt<=?",
+            (lease, item["id"], at or now()),
+        ).rowcount
+        == 1
+    )
 
 
 def send_delivery(item: Json, config: Config) -> None:
@@ -208,7 +223,7 @@ def settle(store: Store, item: Json, error: str | None) -> int:
         )
         # Errors never include URLs, credentials or response bodies.
         store.db.execute(
-            "UPDATE outbox SET attempts=?,next_attempt=?,last_error=? WHERE id=?",
+            "UPDATE outbox SET status='pending',attempts=?,next_attempt=?,last_error=? WHERE id=?",
             (attempts, retry, error, item["id"]),
         )
         return 0
@@ -222,6 +237,8 @@ def settle(store: Store, item: Json, error: str | None) -> int:
 def deliver(store: Store, config: Config, at: str | None = None) -> int:
     delivered = 0
     for item in pending(store, config, at):
+        if not claim(store, item, at):
+            continue
         error = None
         try:
             send_delivery(item, config)
@@ -234,6 +251,8 @@ def deliver(store: Store, config: Config, at: str | None = None) -> int:
 async def deliver_async(store: Store, config: Config) -> int:
     delivered = 0
     for item in pending(store, config):
+        if not claim(store, item):
+            continue
         error = None
         try:
             await asyncio.to_thread(send_delivery, item, config)
