@@ -197,7 +197,12 @@ def test_reconciliation_is_order_independent_for_prompts_and_model_calls(store):
 
 
 def test_daemon_lifecycle_and_exclusive_lock(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
     import tracebook.daemon as module
+
+    # Monotonic clocks may start near zero on freshly booted CI machines.
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 10.0))
 
     registry = {"generic": adapters()["generic"]}
     monkeypatch.setattr(module, "adapters", lambda: registry)

@@ -12,6 +12,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from tracebook.adapters.base import Adapter
@@ -19,6 +20,14 @@ from tracebook.config import Config
 from tracebook.model import Json, digest, now, obj, utc
 from tracebook.platform import atomic_write
 from tracebook.store import Store, encode
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self, req: urllib.request.Request, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> None:
+        # A configured channel must not forward private reports/credentials elsewhere.
+        return None
 
 
 def nightly_window(config: Config, at: datetime | None = None) -> tuple[str, str]:
@@ -163,7 +172,7 @@ def send_delivery(item: Json, config: Config) -> None:
             headers,
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=15) as response:
             if response.status >= 300:
                 raise ValueError(f"Delivery HTTP status {response.status}")
     elif item["channel"] == "smtp":

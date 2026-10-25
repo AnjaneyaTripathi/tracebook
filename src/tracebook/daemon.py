@@ -63,7 +63,7 @@ async def _serve(config: Config) -> None:
             loop.add_signal_handler(sig, stop.set)
 
     async def ingest() -> None:
-        last_analysis = 0.0
+        last_analysis = float("-inf")
         dirty = True
         last_revision = -1
         while not stop.is_set():

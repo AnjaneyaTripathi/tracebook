@@ -63,12 +63,22 @@ def test_explicit_webhook_and_smtp_use_idempotency_tls_and_environment(tmp_path,
     response = MagicMock()
     response.__enter__.return_value.status = 204
     network = MagicMock(return_value=response)
-    monkeypatch.setattr("urllib.request.urlopen", network)
+    opener = MagicMock()
+    opener.open = network
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: opener)
     monkeypatch.setenv("TRACEBOOK_WEBHOOK_TOKEN", "test-token")
     send_delivery(item, config)
     request = network.call_args.args[0]
     assert request.get_header("Idempotency-key") == "delivery-id"
     assert request.get_header("Authorization") == "Bearer test-token"
+    from tracebook.reports import NoRedirect
+
+    assert (
+        NoRedirect().redirect_request(
+            request, None, 302, "redirect", {}, "https://elsewhere.invalid"
+        )
+        is None
+    )
     smtp = MagicMock()
     monkeypatch.setattr("smtplib.SMTP", smtp)
     monkeypatch.setenv("TRACEBOOK_SMTP_PASSWORD", "test-password")
