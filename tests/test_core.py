@@ -60,6 +60,7 @@ def test_redaction_recursive_and_embedded():
 @pytest.mark.parametrize(
     "payload",
     ['{"session_id":"test","prompt":"example"}', "not json", '{"huge":"' + "x" * 300000 + '"}'],
+    ids=["valid-json", "malformed-json", "oversized-stdin"],
 )
 def test_hook_always_silent_and_zero(tmp_path: Path, agent: str, payload: str):
     command = [sys.executable, "-S", hook.__file__, "--agent", agent]
