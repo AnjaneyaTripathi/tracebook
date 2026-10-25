@@ -21,6 +21,13 @@ export interface Tool {
   id: string; tool: string; native_name: string; input: string | null; output: string | null;
   status: string; duration_ms: number | null; ts: string;
 }
+export interface ModelCall {
+  id: string; model: string | null; data: string; ts: string;
+  input_uncached: number | null; input_cache_read: number | null; input_cache_write: number | null;
+  output: number | null; reasoning: number | null; total_reported: number | null;
+  cost_reported: number | null; cost_estimated: number | null;
+}
+export interface TurnDetail extends Turn { calls: ModelCall[]; tools: Tool[] }
 export interface Finding {
   id: string; detector: string; severity: string; agent: string; session_id: string;
   title: string; recommendation: string; evidence: string; ts: string;

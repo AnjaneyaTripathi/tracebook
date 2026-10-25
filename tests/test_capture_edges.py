@@ -173,6 +173,28 @@ def test_generic_jsonl_csv_and_malformed_parser(store, tmp_path):
     assert list(parser.parse_record({"kind": "future"}, {}))[0].kind == "warning"
 
 
+def test_import_keeps_good_records_around_malformed_lines(store, tmp_path, monkeypatch):
+    import tracebook.capture as module
+
+    monkeypatch.setattr(module, "MAX_LINE", 128)
+    mapping = tmp_path / "map.toml"
+    mapping.write_text("")
+    file = tmp_path / "mixed.jsonl"
+    file.write_bytes(
+        b'{"kind":"turn_start","id":"one","turn_id":"one","session_id":"s","prompt":"first"}\n'
+        b'\n{"api_key":"sk-secret-value",invalid}\n[]\n'
+        + b"x" * 300
+        + b'\n{"kind":"turn_start","id":"two","turn_id":"two","session_id":"s","prompt":"last"}\n'
+    )
+    capture = Capture(store, adapters())
+    assert capture.import_file(file, mapping) == 5
+    assert capture.import_file(file, mapping) == 5
+    assert store.overview()["turns"] == 2
+    assert store.overview()["parse_warnings"] == 3
+    assert len(store.rows("SELECT * FROM raw_payloads")) == 5
+    assert "sk-secret-value" not in str(store.rows("SELECT * FROM raw_payloads"))
+
+
 def test_truncation_oversize_and_invalid_snapshot(store, tmp_path, monkeypatch):
     import tracebook.capture as module
 

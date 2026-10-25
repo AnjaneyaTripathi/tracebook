@@ -7,9 +7,10 @@ Local validation on macOS / Python 3.12.13:
   replay/rotation/partial lines, WAL snapshots, hook silence, secrets, pricing,
   every detector, API/OTLP, scheduler/DST, outbox retries and daemon lifecycle.
 - Coverage gate is 85% across the package, including branches; recent local run
-  is approximately 92% with 66 tests. CI runs the same checks on Linux and macOS.
-- Three Chromium/Chrome browser tests exercise desktop/mobile rendering, session
-  filtering, tool IO, provenance, capabilities and report generation. Screenshots
+  is approximately 92% with 67 tests. CI runs the same checks on Linux and macOS.
+- Four Chromium/Chrome browser tests exercise desktop/mobile rendering, session
+  filtering, per-prompt model usage and tool IO, missing versus zero usage, request
+  retries, provenance, capabilities and report generation. Screenshots
   were inspected using isolated, labeled synthetic data. No runtime user data is
   embedded in the dashboard or committed as screenshots.
 - Node dependency audit reported zero known vulnerabilities when installed.

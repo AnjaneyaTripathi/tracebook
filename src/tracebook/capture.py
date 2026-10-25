@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import time
 import tomllib
+from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 
@@ -23,6 +24,29 @@ from tracebook.store import Store
 
 MAX_LINE = 8 * 1024 * 1024
 MAX_SNAPSHOT = 64 * 1024 * 1024
+
+
+def import_records(path: Path) -> Iterator[Json]:
+    """Keep malformed/oversized JSONL records as evidence and continue the import."""
+    if path.suffix.lower() == ".csv":
+        with path.open(encoding="utf-8", errors="replace", newline="") as stream:
+            yield from (dict(row) for row in csv.DictReader(stream))
+        return
+    with path.open("rb") as stream:
+        while line := stream.readline(MAX_LINE + 1):
+            if len(line) > MAX_LINE:
+                preview = line[:65536].decode(errors="replace")
+                while line and not line.endswith(b"\n"):
+                    line = stream.readline(MAX_LINE + 1)
+                yield {"type": "tracebook_oversized_record", "line": preview, "truncated": True}
+            elif line.strip():
+                try:
+                    value = orjson.loads(line)
+                    if not isinstance(value, dict):
+                        raise ValueError("Not an object")
+                    yield value
+                except ValueError:
+                    yield {"type": "malformed_json", "line": line.decode(errors="replace")}
 
 
 class Capture:
@@ -368,11 +392,7 @@ class Capture:
         state: Json = {"mapping": tomllib.loads(mapping.read_text())}
         adapter = self.adapters["generic"]
         count = 0
-        with path.open() as stream, self.store.transaction():
-            if path.suffix.lower() == ".csv":
-                records = (dict(row) for row in csv.DictReader(stream))
-            else:
-                records = (obj(json.loads(line)) for line in stream if line.strip())
-            for record in records:
+        with self.store.transaction():
+            for record in import_records(path):
                 count += self.record(adapter, record, state, "import")
         return count

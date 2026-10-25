@@ -43,6 +43,8 @@ Installed hooks explicitly retain the selected home. Source roots honor
 | Generic | Mapped JSONL/CSV, mapped OTLP, process wrapper | Integration-tested |
 
 Capabilities differ. Every report and the Coverage screen show those differences.
+Open a session and select **Inspect prompt activity** to see that prompt's model
+calls, token categories, reported/estimated costs, duration and associated tools.
 See [schema discovery](docs/SCHEMA_DISCOVERY.md), the generated
 [capability matrix](docs/CAPABILITY_MATRIX.md), and [Tier 2 status](docs/TIER2.md).
 Gemini and OpenCode are **not claimed to be live-verified**. Older unsupported
