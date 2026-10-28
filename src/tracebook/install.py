@@ -75,23 +75,6 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
             document_json.pop("tracebook", None)
         else:
             document_json["tracebook"] = {
-                "PreToolUse": [
-                    {
-                        "matcher": "*",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": shlex.join(
-                                    [
-                                        *shim_command(adapter.id, adapter.state_root),
-                                        "--event",
-                                        "PreToolUse",
-                                    ]
-                                ),
-                            }
-                        ],
-                    }
-                ],
                 "PostToolUse": [
                     {
                         "matcher": "*",

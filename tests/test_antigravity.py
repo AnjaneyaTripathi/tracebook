@@ -70,7 +70,6 @@ def test_antigravity_hook_install_and_uninstall(tmp_path: Path, monkeypatch: obj
 
     data = json.loads(config_file.read_text())
     assert "tracebook" in data
-    assert "PreToolUse" in data["tracebook"]
     assert "PostToolUse" in data["tracebook"]
     assert "SessionStart" in data["tracebook"]
     assert "Stop" in data["tracebook"]
@@ -140,3 +139,25 @@ def test_antigravity_hook_subprocess(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.stdout.strip() == "{}"
     assert result.stderr == ""
+
+    # Test PreToolUse outputs {"decision":"allow"}
+    pre_result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            hook.__file__,
+            "--agent",
+            "antigravity",
+            "--event",
+            "PreToolUse",
+            "--home",
+            str(tmp_path),
+        ],
+        input=payload,
+        text=True,
+        capture_output=True,
+        timeout=5,
+    )
+    assert pre_result.returncode == 0
+    assert json.loads(pre_result.stdout.strip()) == {"decision": "allow"}
+    assert pre_result.stderr == ""

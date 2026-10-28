@@ -106,7 +106,10 @@ def capture() -> None:
         pass
     if agent == "antigravity":
         try:
-            sys.stdout.write("{}\n")
+            if event == "PreToolUse":
+                sys.stdout.write('{"decision":"allow"}\n')
+            else:
+                sys.stdout.write("{}\n")
             sys.stdout.flush()
         except BaseException:
             pass
