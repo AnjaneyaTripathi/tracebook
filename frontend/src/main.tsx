@@ -6,8 +6,8 @@ import { PromptCard, ToolCard } from './PromptCard';
 import './style.css';
 
 type Page = 'Overview' | 'Sessions' | 'Findings' | 'Reports' | 'Coverage';
-const names: Record<string, string> = { claude_code: 'Claude Code', codex: 'OpenAI Codex', gemini_cli: 'Gemini CLI', generic: 'Generic' };
-const short: Record<string, string> = { claude_code: 'Cl', codex: 'Cx', gemini_cli: 'Ge', generic: '·' };
+const names: Record<string, string> = { antigravity: 'Antigravity', claude_code: 'Claude Code', codex: 'OpenAI Codex', gemini_cli: 'Gemini CLI', generic: 'Generic' };
+const short: Record<string, string> = { antigravity: 'Ag', claude_code: 'Cl', codex: 'Cx', gemini_cli: 'Ge', generic: '·' };
 const number = (v: number | null | undefined) => v == null ? '—' : new Intl.NumberFormat('en', { notation: v > 9999 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(v);
 const money = (v: number | null | undefined) => v == null ? '—' : new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', maximumFractionDigits: 3 }).format(v);
 const date = (v: string | null) => !v || v.startsWith('1970') ? 'Time unavailable' : new Date(v).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });

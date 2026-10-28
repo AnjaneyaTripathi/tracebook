@@ -61,13 +61,85 @@ def owned(command: object) -> bool:
 
 
 def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) -> Diff:
-    if adapter.id not in {*EVENTS, "codex"}:
+    if adapter.id not in {*EVENTS, "codex", "antigravity"}:
         return Diff("", "This adapter has no command hooks.", False)
-    path = adapter.root() / ("config.toml" if adapter.id == "codex" else "settings.json")
+    path = adapter.hook_config_path()
     before = path.read_text() if path.exists() else ""
     if path.is_symlink():
         raise ValueError("Refusing to replace a symlinked agent configuration")
-    if adapter.id == "codex":
+    if adapter.id == "antigravity":
+        document_json = json.loads(before) if before.strip() else {}
+        if not isinstance(document_json, dict):
+            raise ValueError("Antigravity hooks must be a JSON object")
+        if uninstall:
+            document_json.pop("tracebook", None)
+        else:
+            document_json["tracebook"] = {
+                "PreToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": shlex.join(
+                                    [
+                                        *shim_command(adapter.id, adapter.state_root),
+                                        "--event",
+                                        "PreToolUse",
+                                    ]
+                                ),
+                            }
+                        ],
+                    }
+                ],
+                "PostToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": shlex.join(
+                                    [
+                                        *shim_command(adapter.id, adapter.state_root),
+                                        "--event",
+                                        "PostToolUse",
+                                    ]
+                                ),
+                            }
+                        ],
+                    }
+                ],
+                "SessionStart": [
+                    {
+                        "type": "command",
+                        "command": shlex.join(
+                            [
+                                *shim_command(adapter.id, adapter.state_root),
+                                "--event",
+                                "SessionStart",
+                            ]
+                        ),
+                    }
+                ],
+                "Stop": [
+                    {
+                        "type": "command",
+                        "command": shlex.join(
+                            [
+                                *shim_command(adapter.id, adapter.state_root),
+                                "--event",
+                                "Stop",
+                            ]
+                        ),
+                    }
+                ],
+            }
+        after = (json.dumps(document_json, indent=2) + "\n") if document_json else ""
+        if after:
+            json.loads(after)
+        if before and document_json and json.loads(before) == document_json:
+            after = before
+    elif adapter.id == "codex":
         document = tomlkit.parse(before)
         previous = document.get("notify")
         prior = (
@@ -158,6 +230,7 @@ def edit_hooks(adapter: Adapter, dry_run: bool = True, uninstall: bool = False) 
         )
     )
     if changed and not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
         if before:
             suffix = now().replace(":", "-")
             atomic_write(path.with_name(path.name + ".tracebook-" + suffix + ".bak"), before)

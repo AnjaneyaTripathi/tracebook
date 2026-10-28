@@ -102,7 +102,7 @@ class Capture:
             checkpoint = self.store.state(key)
             offset = int(checkpoint.get("offset", 0))
             parser = obj(checkpoint.get("parser"))
-            parser.setdefault("session_id", digest(adapter.id, path.name))
+            parser.setdefault("session_id", adapter.session_id(source))
             if source.format == "json":
                 if (
                     checkpoint.get("mtime_ns") == stat.st_mtime_ns

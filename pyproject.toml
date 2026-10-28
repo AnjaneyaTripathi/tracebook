@@ -16,6 +16,7 @@ tracebook = "tracebook.cli:app"
 tracebook-hook = "tracebook.hook:main"
 
 [project.entry-points."tracebook.adapters"]
+antigravity = "tracebook.adapters.antigravity:AntigravityAdapter"
 claude_code = "tracebook.adapters.claude:ClaudeAdapter"
 codex = "tracebook.adapters.codex:CodexAdapter"
 gemini_cli = "tracebook.adapters.gemini:GeminiAdapter"

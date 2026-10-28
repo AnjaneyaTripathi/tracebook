@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -30,13 +31,14 @@ TOOL_MAP = {
         "commandexecution",
         "shell_command",
         "write_stdin",
+        "run_command",
     ),
     "file_read": ("read", "read_file", "read_many_files", "view_image", "imageview"),
     "file_write": ("write", "write_file"),
-    "file_edit": ("edit", "multiedit", "replace", "apply_patch", "filechange"),
+    "file_edit": ("edit", "multiedit", "replace", "apply_patch", "filechange", "edit_file"),
     "file_search": ("glob", "grep", "list_directory", "search_file_content", "find_files"),
     "web_fetch": ("webfetch", "web_fetch"),
-    "web_search": ("websearch", "web_search", "google_web_search"),
+    "web_search": ("websearch", "web_search", "google_web_search", "search_web"),
     "subagent": (
         "task",
         "agent",
@@ -44,10 +46,17 @@ TOOL_MAP = {
         "collabagenttoolcall",
         "subagentactivity",
         "delegate_to_agent",
+        "invoke_subagent",
     ),
     "notebook": ("notebookedit",),
     "todo_plan": ("todowrite", "write_todos", "update_plan", "enterplanmode", "exitplanmode"),
-    "ask_user": ("askuserquestion", "ask_user", "request_user_input", "request_user_input_async"),
+    "ask_user": (
+        "askuserquestion",
+        "ask_user",
+        "request_user_input",
+        "request_user_input_async",
+        "ask_question",
+    ),
 }
 
 
@@ -68,8 +77,8 @@ def tool_input(value: object) -> Json:
     raw = obj(value)
     normalized = dict(raw)
     for target, keys in {
-        "command": ("command", "cmd"),
-        "file_path": ("file_path", "path", "file"),
+        "command": ("command", "cmd", "CommandLine"),
+        "file_path": ("file_path", "path", "file", "Path"),
         "pattern": ("pattern", "query"),
         "url": ("url",),
     }.items():
@@ -112,10 +121,17 @@ class Adapter(ABC):
             run = subprocess.run(
                 [binary, "--version"], capture_output=True, text=True, timeout=5, check=False
             )
-            version = run.stdout.strip().splitlines()[0] if run.stdout.strip() else "unknown"
+            raw = run.stdout.strip().splitlines()[0] if run.stdout.strip() else "unknown"
+            version = re.sub(r"\x1b\]0;[^\x07]*\x07|\x1b\[[0-9;]*[a-zA-Z]", "", raw).strip()
         except (OSError, subprocess.TimeoutExpired):
             version = "unknown"
         return Installation(binary, version, str(self.root()), str(self.root()))
+
+    def session_id(self, source: Source) -> str:
+        return digest(self.id, Path(source.path).name)
+
+    def hook_config_path(self) -> Path:
+        return self.root() / ("config.toml" if self.id == "codex" else "settings.json")
 
     def install_hooks(self, dry_run: bool = True) -> Diff:
         from tracebook.install import edit_hooks
@@ -143,7 +159,7 @@ class Adapter(ABC):
         self, source: Source, chunk: bytes, state: Json | None = None
     ) -> Iterable[Event]:
         state = state if state is not None else {}
-        state.setdefault("session_id", digest(self.id, source.path))
+        state.setdefault("session_id", self.session_id(source))
         for line in chunk.splitlines():
             try:
                 record = json.loads(line)
@@ -174,7 +190,12 @@ class Adapter(ABC):
         data: Json | None = None,
         turn_id: str | None = None,
     ) -> Event:
-        ts = record.get("timestamp", record.get("time", state.get("timestamp")))
+        ts = (
+            record.get("timestamp")
+            or record.get("time")
+            or record.get("created_at")
+            or state.get("timestamp")
+        )
         return Event(
             self.id,
             str(state.get("session_id", "unknown")),

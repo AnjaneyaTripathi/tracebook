@@ -36,6 +36,7 @@ Installed hooks explicitly retain the selected home. Source roots honor
 
 | Adapter | Capture | Verification |
 |---|---|---|
+| Antigravity | Brain JSONL transcripts, hooks.json | Local binary 1.4.8; saved transcripts 1.4.8 |
 | Claude Code | JSONL transcripts, silent hooks, OTLP | Local binary 2.1.286; saved transcripts 2.1.285 |
 | OpenAI Codex | Rollouts, chained notify, OTLP | Local binary 0.163.0; saved transcripts 0.164.0 |
 | Gemini CLI | JSON/JSONL sessions, hooks, OTLP and telemetry outfile | Fixture-tested against pinned upstream source; agent not installed locally |

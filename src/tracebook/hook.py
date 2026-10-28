@@ -104,6 +104,12 @@ def capture() -> None:
                 )
     except BaseException:
         pass
+    if agent == "antigravity":
+        try:
+            sys.stdout.write("{}\n")
+            sys.stdout.flush()
+        except BaseException:
+            pass
 
 
 def main() -> None:

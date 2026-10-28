@@ -7,6 +7,7 @@ commands and paths have been replaced; no original prompts are committed.
 
 | Agent | Installed | Evidence | Validation |
 |---|---|---|---|
+| Antigravity | 1.4.8 | 8 local brain transcript files; official docs | locally observed |
 | Claude Code | 2.1.286 | 9 local project JSONL files; official docs | locally observed |
 | Codex CLI | 0.163.0 | 599 local rollout files; official docs | locally observed |
 | Gemini CLI | absent | official docs and upstream source revision below | unverified locally |

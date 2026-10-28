@@ -102,3 +102,20 @@ output = 20.0
 cache_read = 0.2
 cache_write = 5.0
 cache_write_by_ttl = { "300" = 5.0, "3600" = 8.0 }
+
+[models."anthropic/claude-haiku-5-5"]
+aliases = ["claude-haiku-5-5"]
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+input = 0.8
+output = 4.0
+cache_read = 0.08
+cache_write = 1.0
+cache_write_by_ttl = { "300" = 1.0, "3600" = 1.6 }
+
+[models."google/gemini-flash"]
+aliases = ["gemini-flash", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "gemini-3.8-flash", "gemini-2.5-flash"]
+source = "https://ai.google.dev/pricing"
+input = 0.10
+output = 0.40
+cache_read = 0.025
+

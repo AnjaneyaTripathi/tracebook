@@ -1,0 +1,8 @@
+{
+  "agent": "antigravity",
+  "installed_version": "1.4.8",
+  "verification": "local observed schema; all content and identifiers replaced",
+  "observed_at": "2026-10-28",
+  "records": 8,
+  "transcript_version": "1.4.8"
+}

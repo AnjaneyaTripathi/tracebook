@@ -30,8 +30,8 @@ def store(tmp_path: Path):
 
 def test_entry_points_and_observed_conformance():
     registry = adapters()
-    assert {"claude_code", "codex", "gemini_cli", "generic"} <= registry.keys()
-    for agent in ("claude_code", "codex"):
+    assert {"antigravity", "claude_code", "codex", "gemini_cli", "generic"} <= registry.keys()
+    for agent in ("antigravity", "claude_code", "codex"):
         paths = list(Path("tests/fixtures", agent).glob("*/observed.jsonl"))
         events = conform(registry[agent], paths, complete=False)
         assert any(e.kind == "model_call" for e in events)
