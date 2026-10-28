@@ -2176,6 +2176,13 @@ details[open] summary::before {
   margin: 0;
 }
 
+.token-guide-subnote {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #65795b;
+  line-height: 1.4;
+}
+
 .token-indicator {
   width: 9px;
   height: 9px;
