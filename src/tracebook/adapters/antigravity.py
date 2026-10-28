@@ -80,6 +80,29 @@ class AntigravityAdapter(Adapter):
 
         return None
 
+    def resolve_subagent_info(self, session_id: str) -> Json | None:
+        """Finds parent conversation and role/type for a subagent conversation id."""
+        brain = self.root() / "brain"
+        if not brain.is_dir():
+            return None
+        for sub_file in brain.glob("*/.system_generated/subagents/*.json"):
+            if sub_file.name == f"{session_id}.json" or sub_file.stem == session_id:
+                try:
+                    import json
+
+                    data = json.loads(sub_file.read_text(encoding="utf-8"))
+                    desc = data.get("subagentDescriptor") or {}
+                    parent_native_id = sub_file.parent.parent.parent.name
+                    return {
+                        "parent_native_id": parent_native_id,
+                        "subagent_role": str(desc.get("role") or ""),
+                        "subagent_type": str(desc.get("typeName") or ""),
+                        "is_subagent": True,
+                    }
+                except Exception:
+                    pass
+        return None
+
     def capabilities(self) -> Capabilities:
         return Capabilities(
             transcripts="yes",
@@ -123,16 +146,20 @@ class AntigravityAdapter(Adapter):
 
         if not state.get("session_emitted"):
             state["session_emitted"] = True
+            session_data: Json = {
+                "cwd": state.get("cwd"),
+                "agent_version": "1.4.8",
+                "verification": "locally observed",
+            }
+            sub_info = self.resolve_subagent_info(session_id)
+            if sub_info:
+                session_data.update(sub_info)
             yield self.event(
                 record,
                 state,
                 "session",
                 session_id,
-                {
-                    "cwd": state.get("cwd"),
-                    "agent_version": "1.4.8",
-                    "verification": "locally observed",
-                },
+                session_data,
             )
 
         if typ == "USER_INPUT":
@@ -201,16 +228,22 @@ class AntigravityAdapter(Adapter):
                                 if (parent / ".git").is_dir():
                                     state["cwd"] = str(parent)
                                     break
+                    tool_data: Json = {
+                        "native_name": name,
+                        "tool": tool_kind(name),
+                        "input": tool_input(args),
+                    }
+                    if name == "invoke_subagent" and isinstance(args, dict):
+                        if args.get("Role"):
+                            tool_data["subagent_role"] = str(args.get("Role")).strip('"')
+                        if args.get("TypeName"):
+                            tool_data["subagent_type"] = str(args.get("TypeName")).strip('"')
                     yield self.event(
                         record,
                         state,
                         "tool_call",
                         tid,
-                        {
-                            "native_name": name,
-                            "tool": tool_kind(name),
-                            "input": tool_input(args),
-                        },
+                        tool_data,
                         turn,
                     )
                     state.setdefault("pending_tools", []).append(tid)
@@ -235,16 +268,21 @@ class AntigravityAdapter(Adapter):
                     if record.get("status") in {"ERROR", "FAILED"} or record.get("error")
                     else "completed"
                 )
+                content_str = text_content(record.get("content")) or ""
+                result_data: Json = {
+                    "output": content_str,
+                    "status": status,
+                    "error": record.get("error"),
+                }
+                match = re.search(r'"conversationId":\s*"([^"]+)"', content_str)
+                if match:
+                    result_data["child_native_id"] = match.group(1)
                 yield self.event(
                     record,
                     state,
                     "tool_result",
                     tid,
-                    {
-                        "output": text_content(record.get("content")),
-                        "status": status,
-                        "error": record.get("error"),
-                    },
+                    result_data,
                     turn,
                 )
             else:

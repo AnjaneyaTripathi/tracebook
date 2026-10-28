@@ -13,13 +13,16 @@ export interface Adapter {
 export interface Session {
   id: string; agent: string; native_id: string; project: string | null; started_at: string | null;
   turns: number; tools: number; tokens: number | null; first_prompt: string | null; resumed: number;
+  models?: string | null; data?: string;
 }
 export interface Turn {
   id: string; prompt: string | null; started_at: string | null; ended_at: string | null; status: string; kind: string;
+  input_uncached?: number; input_cache_read?: number; input_cache_write?: number;
+  output?: number; reasoning?: number; cost?: number; models?: string | null;
 }
 export interface Tool {
   id: string; tool: string; native_name: string; input: string | null; output: string | null;
-  status: string; duration_ms: number | null; ts: string;
+  status: string; duration_ms: number | null; ts: string; data?: string;
 }
 export interface ModelCall {
   id: string; model: string | null; data: string; ts: string;
@@ -32,8 +35,14 @@ export interface Finding {
   id: string; detector: string; severity: string; agent: string; session_id: string;
   title: string; recommendation: string; evidence: string; ts: string;
 }
+export interface SubagentSummary {
+  id: string; agent: string; native_id: string; started_at: string; data: string;
+  turns: number; tools: number; tokens: number | null;
+}
 export interface SessionDetail {
   id: string; agent: string; native_id: string; turns: Turn[]; tools: Tool[]; findings: Finding[];
+  data?: string; parent_session?: { id: string; agent: string; native_id: string; started_at: string } | null;
+  subagents?: SubagentSummary[];
 }
 export interface CanonicalEvent {
   id: string; kind: string; ts: string; data: Record<string, unknown>;

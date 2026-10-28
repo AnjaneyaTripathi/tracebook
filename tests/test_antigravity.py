@@ -191,3 +191,38 @@ def test_antigravity_project_resolution(tmp_path: Path, monkeypatch: object) -> 
     events = list(adapter.parse_record({"step_index": 0, "type": "USER_INPUT"}, state))
     session_ev = next(e for e in events if e.kind == "session")
     assert session_ev.data["cwd"] == "/home/user/workspace/test-repo"
+
+
+def test_antigravity_subagent_resolution(tmp_path: Path, monkeypatch: object) -> None:
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+    adapter = AntigravityAdapter()
+
+    parent_id = "parent-conv-456"
+    child_id = "child-conv-789"
+    sub_dir = tmp_path / "brain" / parent_id / ".system_generated" / "subagents"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    sub_file = sub_dir / f"{child_id}.json"
+    sub_file.write_text(
+        json.dumps(
+            {
+                "conversationId": child_id,
+                "subagentDescriptor": {"typeName": "research", "role": "Auditor"},
+                "state": "SUBAGENT_STATE_ALIVE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    info = adapter.resolve_subagent_info(child_id)
+    assert info is not None
+    assert info["parent_native_id"] == parent_id
+    assert info["subagent_role"] == "Auditor"
+    assert info["subagent_type"] == "research"
+    assert info["is_subagent"] is True
+
+    state: dict[str, object] = {"session_id": child_id}
+    events = list(adapter.parse_record({"step_index": 0, "type": "USER_INPUT"}, state))
+    session_ev = next(e for e in events if e.kind == "session")
+    assert session_ev.data["parent_native_id"] == parent_id
+    assert session_ev.data["subagent_role"] == "Auditor"
+    assert session_ev.data["is_subagent"] is True

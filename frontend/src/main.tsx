@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { marked } from 'marked';
-import type { Adapter, CanonicalEvent, Finding, Overview, Report, Session, SessionDetail } from './types';
+import type { Adapter, CanonicalEvent, Finding, Overview, Report, Session, SessionDetail, Turn } from './types';
 import { PromptCard, ToolCard } from './PromptCard';
 import './style.css';
 
@@ -78,6 +78,74 @@ function Empty({ title, children }: { title: string; children: React.ReactNode }
       <span className="empty-icon">⌁</span>
       <h3>{title}</h3>
       <div>{children}</div>
+    </div>
+  );
+}
+
+function ContextTrajectory({
+  turns,
+  onSelectTurn,
+}: {
+  turns: Turn[];
+  onSelectTurn: (index: number) => void;
+}) {
+  if (!turns || turns.length === 0) return null;
+
+  const maxTokens = Math.max(
+    1,
+    ...turns.map((t) => (t.input_uncached || 0) + (t.input_cache_read || 0) + (t.output || 0))
+  );
+
+  return (
+    <div className="trajectory-card">
+      <div className="trajectory-header">
+        <div>
+          <span className="trajectory-eyebrow">CONTEXT & CACHE TRAJECTORY</span>
+          <h4>Turn-by-turn prompt growth & cache hit rate</h4>
+        </div>
+        <div className="trajectory-legend">
+          <span className="leg-item">
+            <i className="leg-dot seg-cache" /> Cache read
+          </span>
+          <span className="leg-item">
+            <i className="leg-dot seg-uncached" /> Uncached input
+          </span>
+          <span className="leg-item">
+            <i className="leg-dot seg-output" /> Output
+          </span>
+        </div>
+      </div>
+      <div className="trajectory-bars">
+        {turns.map((turn, i) => {
+          const uncached = turn.input_uncached || 0;
+          const cache = turn.input_cache_read || 0;
+          const out = turn.output || 0;
+          const total = uncached + cache + out;
+          const heightPct = Math.max(12, Math.round((total / maxTokens) * 100));
+          const cachePct = total > 0 ? Math.round((cache / Math.max(1, uncached + cache)) * 100) : 0;
+          const isWarning = total >= 16000 && cachePct < 5;
+
+          return (
+            <button
+              key={turn.id}
+              type="button"
+              className={`trajectory-col ${isWarning ? 'col-warning' : ''}`}
+              onClick={() => onSelectTurn(i)}
+              title={`Turn #${i + 1}: ${total.toLocaleString()} tokens (${cachePct}% cached)`}
+            >
+              <span className={`col-pct ${cachePct >= 50 ? 'high' : cachePct > 0 ? 'mid' : 'zero'}`}>
+                {cachePct}%
+              </span>
+              <div className="col-bar-wrap" style={{ height: `${heightPct}%` }}>
+                <div className="col-seg seg-output" style={{ flex: Math.max(1, out) }} />
+                <div className="col-seg seg-uncached" style={{ flex: Math.max(1, uncached) }} />
+                <div className="col-seg seg-cache" style={{ flex: Math.max(1, cache) }} />
+              </div>
+              <span className="col-label">#{i + 1}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -987,21 +1055,130 @@ function App() {
               <span className="session-id-label">Session ID:</span>
               <code className="session-id">{selected.native_id}</code>
             </div>
-            <div className="detail-tabs">
-              {['Prompts', 'Tools', 'Evidence'].map((tab) => (
+
+            {selected.parent_session && (
+              <div className="subagent-parent-banner">
+                <span className="subagent-icon">↳</span>
+                <div>
+                  <strong>Subagent Session</strong>
+                  <p>
+                    Spawned by parent session: <code>{selected.parent_session.native_id.slice(0, 16)}…</code>
+                  </p>
+                </div>
                 <button
-                  className={detailTab === tab ? 'active' : ''}
-                  key={tab}
-                  onClick={() => setDetailTab(tab)}
+                  type="button"
+                  className="parent-link-btn"
+                  onClick={() => void openSession(selected.parent_session!.id)}
                 >
-                  {tab}
+                  Open Parent Session ↖
+                </button>
+              </div>
+            )}
+
+            {selected.subagents && selected.subagents.length > 0 && (
+              <div className="subagents-list-card">
+                <div className="subagents-list-header">
+                  <div>
+                    <strong>↳ Spawned Subagents ({selected.subagents.length})</strong>
+                    <small>Autonomous sub-tasks executed in child sessions</small>
+                  </div>
+                </div>
+                <div className="subagents-grid">
+                  {selected.subagents.map((sub) => {
+                    let role = 'Subagent';
+                    let typeName = '';
+                    try {
+                      const d = JSON.parse(sub.data);
+                      if (d.subagent_role) role = d.subagent_role;
+                      if (d.subagent_type) typeName = d.subagent_type;
+                    } catch {
+                      /* empty */
+                    }
+
+                    return (
+                      <div key={sub.id} className="subagent-child-item">
+                        <div className="sub-role-row">
+                          <span className="role-tag">🎯 {role}</span>
+                          {typeName && <span className="type-tag">{typeName}</span>}
+                        </div>
+                        <div className="sub-stats-row">
+                          <span>{sub.turns} turns</span>
+                          <span>·</span>
+                          <span>{sub.tools} tools</span>
+                          <span>·</span>
+                          <span>{sub.tokens ? `${number(sub.tokens)} tokens` : '—'}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="primary subagent-open-btn"
+                          onClick={() => void openSession(sub.id)}
+                        >
+                          Open Subagent Trace ↗
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <ContextTrajectory
+              turns={selected.turns}
+              onSelectTurn={(idx) => {
+                setDetailTab('Prompts');
+                const el = document.getElementById(`prompt-${selected.turns[idx]?.id}`);
+                el?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            />
+
+            <div className="detail-tabs">
+              {[
+                { name: 'Prompts', count: selected.turns.length },
+                { name: 'Tools', count: selected.tools.length },
+                { name: 'Errors', count: selected.tools.filter((t) => t.status === 'error').length },
+                { name: 'Evidence', count: events.length },
+              ].map(({ name, count }) => (
+                <button
+                  className={`${detailTab === name ? 'active' : ''} ${name === 'Errors' && count > 0 ? 'tab-error' : ''}`}
+                  key={name}
+                  aria-label={name}
+                  onClick={() => setDetailTab(name)}
+                >
+                  {name}
+                  {count > 0 && <span className="tab-pill-count">{count}</span>}
                 </button>
               ))}
             </div>
             <div className="drawer-body">
               {detailTab === 'Prompts' &&
-                selected.turns.map((turn, i) => <PromptCard key={turn.id} turn={turn} index={i} />)}
-              {detailTab === 'Tools' && selected.tools.map((tool) => <ToolCard key={tool.id} tool={tool} />)}
+                selected.turns.map((turn, i) => (
+                  <PromptCard
+                    key={turn.id}
+                    turn={turn}
+                    index={i}
+                    previousTurnModel={i > 0 ? selected.turns[i - 1].models : null}
+                    onOpenSubagent={openSession}
+                  />
+                ))}
+              {detailTab === 'Tools' &&
+                selected.tools.map((tool) => (
+                  <ToolCard key={tool.id} tool={tool} onOpenSubagent={openSession} />
+                ))}
+              {detailTab === 'Errors' &&
+                (() => {
+                  const errorTools = selected.tools.filter((t) => t.status === 'error');
+                  return errorTools.length ? (
+                    errorTools.map((tool) => (
+                      <ToolCard key={tool.id} tool={tool} onOpenSubagent={openSession} />
+                    ))
+                  ) : (
+                    <div className="empty-error-state">
+                      <span className="empty-icon">✅</span>
+                      <strong>Zero tool errors in this session</strong>
+                      <p>All tool calls completed cleanly without errors.</p>
+                    </div>
+                  );
+                })()}
               {detailTab === 'Evidence' && (
                 <>
                   <p className="subtle">
@@ -1187,9 +1364,35 @@ function SessionTable({ sessions, open }: { sessions: Session[]; open: (id: stri
                     <Mark agent={s.agent} />
                     <span>
                       <strong>{s.first_prompt?.slice(0, 95) || names[s.agent] || s.agent}</strong>
-                      <small>
-                        {names[s.agent] || s.agent}
-                        {s.resumed ? ' · resumed' : ''}
+                      <small className="session-sub-meta">
+                        <span>
+                          {names[s.agent] || s.agent}
+                          {s.resumed ? ' · resumed' : ''}
+                        </span>
+                        {(() => {
+                          try {
+                            const d = s.data ? JSON.parse(s.data) : null;
+                            if (d?.is_subagent) {
+                              return (
+                                <span className="subagent-tag-pill">
+                                  ↳ Subagent{d.subagent_role ? `: ${d.subagent_role}` : ''}
+                                </span>
+                              );
+                            }
+                          } catch {
+                            /* empty */
+                          }
+                          return null;
+                        })()}
+                        {s.models && (
+                          <span className="session-models-wrap">
+                            {s.models.split(',').map((m) => (
+                              <span key={m} className="model-chip">
+                                {m.trim()}
+                              </span>
+                            ))}
+                          </span>
+                        )}
                       </small>
                     </span>
                   </button>

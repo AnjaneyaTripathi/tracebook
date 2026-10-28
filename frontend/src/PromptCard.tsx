@@ -28,14 +28,72 @@ function sum(values: (number | null)[]) {
   return known.length ? known.reduce((total, value) => total + value, 0) : null;
 }
 
-export function ToolCard({ tool }: { tool: Tool }) {
+export function ToolCard({
+  tool,
+  onOpenSubagent,
+}: {
+  tool: Tool;
+  onOpenSubagent?: (nativeIdOrId: string) => void;
+}) {
+  const [viewFormat, setViewFormat] = useState<'formatted' | 'raw'>('formatted');
   const toolName = tool.native_name || 'Unknown tool';
   const isError = tool.status === 'error';
+
+  // Parse input if json
+  const inputObj = (() => {
+    if (!tool.input) return null;
+    try {
+      return JSON.parse(tool.input) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  })();
+
+  const isSubagent = tool.tool === 'subagent' || tool.native_name === 'invoke_subagent';
+  const subagentRole = inputObj?.Role ? String(inputObj.Role).replace(/^"|"$/g, '') : null;
+  const subagentType = inputObj?.TypeName ? String(inputObj.TypeName).replace(/^"|"$/g, '') : null;
+  const subagentPrompt = inputObj?.Prompt ? String(inputObj.Prompt).replace(/^"|"$/g, '') : null;
+
+  // Extract child conversationId from output if subagent
+  const childConversationId = (() => {
+    if (!tool.output) return null;
+    const match = /"conversationId":\s*"([^"]+)"/.exec(tool.output);
+    return match ? match[1] : null;
+  })();
+
+  // Detect error category if error
+  const errorInfo = (() => {
+    if (!isError && !tool.output?.includes('error')) return null;
+    const text = tool.output || '';
+    if (text.includes('permission check failed') || text.includes('Permission prompt')) {
+      return { tag: '🚫 Permission Denied', detail: 'Operation blocked by safety check or user denial.' };
+    }
+    if (text.includes('exit status') || text.includes('Command failed')) {
+      return { tag: '❌ Process Exit Error', detail: 'Script or command exited with non-zero exit code.' };
+    }
+    if (text.includes('not found') || text.includes('No such file')) {
+      return { tag: '📄 File / Target Missing', detail: 'The referenced path or binary could not be found.' };
+    }
+    return { tag: '⚠️ Tool Execution Error', detail: 'An error occurred while executing this tool.' };
+  })();
+
+  const commandLine =
+    inputObj?.CommandLine || inputObj?.command || inputObj?.cmd || inputObj?.command_line
+      ? String(
+          inputObj.CommandLine || inputObj.command || inputObj.cmd || inputObj.command_line
+        ).replace(/^"|"$/g, '')
+      : null;
+  const filePath =
+    inputObj?.Path || inputObj?.path || inputObj?.AbsolutePath
+      ? String(inputObj.Path || inputObj.path || inputObj.AbsolutePath).replace(/^"|"$/g, '')
+      : null;
+
   return (
-    <details className={`tool-card ${isError ? 'tool-error' : ''}`}>
+    <details className={`tool-card ${isError ? 'tool-error' : ''} ${isSubagent ? 'tool-subagent' : ''}`}>
       <summary>
         <span className="tool-kind">{tool.tool}</span>
         <strong>{toolName}</strong>
+        {isSubagent && subagentRole && <span className="subagent-role-pill">🎯 {subagentRole}</span>}
         <span className={`status ${tool.status}`}>
           <i />
           {tool.status}
@@ -43,10 +101,107 @@ export function ToolCard({ tool }: { tool: Tool }) {
         <span className="tool-time">{elapsed(tool.duration_ms)}</span>
       </summary>
       <div className="tool-details-body">
-        <h4>Input</h4>
-        <pre>{tool.input || 'Not captured'}</pre>
-        <h4>Output</h4>
-        <pre>{tool.output || 'Not captured'}</pre>
+        <div className="tool-view-toggle-bar">
+          <button
+            type="button"
+            className={viewFormat === 'formatted' ? 'active' : ''}
+            onClick={(e) => {
+              e.preventDefault();
+              setViewFormat('formatted');
+            }}
+          >
+            📄 Formatted View
+          </button>
+          <button
+            type="button"
+            className={viewFormat === 'raw' ? 'active' : ''}
+            onClick={(e) => {
+              e.preventDefault();
+              setViewFormat('raw');
+            }}
+          >
+            📝 Raw JSON
+          </button>
+        </div>
+
+        {viewFormat === 'formatted' ? (
+          <div className="tool-formatted-view">
+            {errorInfo && (
+              <div className="tool-error-banner">
+                <span className="error-tag">{errorInfo.tag}</span>
+                <p>{errorInfo.detail}</p>
+              </div>
+            )}
+
+            {isSubagent && (
+              <div className="subagent-card-body">
+                <div className="subagent-header-row">
+                  <div>
+                    <strong>Role:</strong> {subagentRole || 'Autonomous Agent'}
+                    {subagentType && <span className="subagent-type-tag">type: {subagentType}</span>}
+                  </div>
+                  {childConversationId && onOpenSubagent && (
+                    <button
+                      type="button"
+                      className="primary open-subagent-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenSubagent(childConversationId);
+                      }}
+                    >
+                      🚀 Open Subagent Trace ({childConversationId.slice(0, 8)}…) ↗
+                    </button>
+                  )}
+                </div>
+                {subagentPrompt && (
+                  <details className="subagent-prompt-details">
+                    <summary>View Subagent Instructions</summary>
+                    <pre className="subagent-prompt-pre">{subagentPrompt}</pre>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {commandLine && (
+              <div className="tool-param-card">
+                <div className="param-label">
+                  <strong>Command line:</strong>
+                  <button
+                    type="button"
+                    className="copy-param-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(commandLine);
+                    }}
+                  >
+                    Copy
+                  </button>
+                </div>
+                <code className="command-box">{commandLine}</code>
+              </div>
+            )}
+
+            {filePath && (
+              <div className="tool-param-card">
+                <strong>Target File:</strong> <code>{filePath}</code>
+              </div>
+            )}
+
+            <div className="tool-output-formatted">
+              <h4>Tool Output</h4>
+              <pre className={isError ? 'output-error-pre' : 'output-pre'}>
+                {tool.output || 'No output recorded'}
+              </pre>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h4>Input</h4>
+            <pre>{tool.input || 'Not captured'}</pre>
+            <h4>Output</h4>
+            <pre>{tool.output || 'Not captured'}</pre>
+          </>
+        )}
       </div>
     </details>
   );
@@ -99,7 +254,121 @@ function CallCard({ call }: { call: ModelCall }) {
   );
 }
 
-export function PromptCard({ turn, index }: { turn: Turn; index: number }) {
+function TurnLatencyWaterfall({ detail }: { detail: TurnDetail }) {
+  const modelDuration = detail.calls.reduce((acc, c) => {
+    try {
+      const d = (JSON.parse(c.data) as Record<string, unknown>).duration_ms;
+      return acc + (typeof d === 'number' && d > 0 ? d : 0);
+    } catch {
+      return acc;
+    }
+  }, 0);
+
+  const shellDuration = detail.tools
+    .filter((t) => t.tool === 'shell')
+    .reduce((acc, t) => acc + (typeof t.duration_ms === 'number' && t.duration_ms > 0 ? t.duration_ms : 0), 0);
+
+  const fileDuration = detail.tools
+    .filter((t) => ['file_read', 'file_edit', 'file_write'].includes(t.tool))
+    .reduce((acc, t) => acc + (typeof t.duration_ms === 'number' && t.duration_ms > 0 ? t.duration_ms : 0), 0);
+
+  const subagentDuration = detail.tools
+    .filter((t) => t.tool === 'subagent')
+    .reduce((acc, t) => acc + (typeof t.duration_ms === 'number' && t.duration_ms > 0 ? t.duration_ms : 0), 0);
+
+  const otherDuration = detail.tools
+    .filter((t) => !['shell', 'file_read', 'file_edit', 'file_write', 'subagent'].includes(t.tool))
+    .reduce((acc, t) => acc + (typeof t.duration_ms === 'number' && t.duration_ms > 0 ? t.duration_ms : 0), 0);
+
+  const total = modelDuration + shellDuration + fileDuration + subagentDuration + otherDuration;
+  if (total <= 0) return null;
+
+  const pct = (val: number) => Math.max(1, Math.round((val / total) * 100));
+
+  return (
+    <div className="turn-waterfall-card">
+      <div className="waterfall-header">
+        <span className="waterfall-title">⏱ Turn Latency Waterfall</span>
+        <span className="waterfall-total">Total: {(total / 1000).toFixed(2)}s</span>
+      </div>
+      <div className="waterfall-bar" role="meter" aria-label="Latency breakdown">
+        {modelDuration > 0 && (
+          <div
+            className="waterfall-seg seg-model"
+            style={{ width: `${pct(modelDuration)}%` }}
+            title={`Model generation & thinking: ${(modelDuration / 1000).toFixed(2)}s (${pct(modelDuration)}%)`}
+          />
+        )}
+        {shellDuration > 0 && (
+          <div
+            className="waterfall-seg seg-shell"
+            style={{ width: `${pct(shellDuration)}%` }}
+            title={`Shell executions: ${(shellDuration / 1000).toFixed(2)}s (${pct(shellDuration)}%)`}
+          />
+        )}
+        {fileDuration > 0 && (
+          <div
+            className="waterfall-seg seg-file"
+            style={{ width: `${pct(fileDuration)}%` }}
+            title={`File operations: ${(fileDuration / 1000).toFixed(2)}s (${pct(fileDuration)}%)`}
+          />
+        )}
+        {subagentDuration > 0 && (
+          <div
+            className="waterfall-seg seg-subagent"
+            style={{ width: `${pct(subagentDuration)}%` }}
+            title={`Subagent execution: ${(subagentDuration / 1000).toFixed(2)}s (${pct(subagentDuration)}%)`}
+          />
+        )}
+        {otherDuration > 0 && (
+          <div
+            className="waterfall-seg seg-other"
+            style={{ width: `${pct(otherDuration)}%` }}
+            title={`Other tools: ${(otherDuration / 1000).toFixed(2)}s (${pct(otherDuration)}%)`}
+          />
+        )}
+      </div>
+      <div className="waterfall-legend">
+        {modelDuration > 0 && (
+          <span className="legend-item">
+            <i className="legend-dot seg-model" />
+            Model: {(modelDuration / 1000).toFixed(1)}s ({pct(modelDuration)}%)
+          </span>
+        )}
+        {shellDuration > 0 && (
+          <span className="legend-item">
+            <i className="legend-dot seg-shell" />
+            Shell: {(shellDuration / 1000).toFixed(1)}s ({pct(shellDuration)}%)
+          </span>
+        )}
+        {fileDuration > 0 && (
+          <span className="legend-item">
+            <i className="legend-dot seg-file" />
+            Files: {(fileDuration / 1000).toFixed(1)}s ({pct(fileDuration)}%)
+          </span>
+        )}
+        {subagentDuration > 0 && (
+          <span className="legend-item">
+            <i className="legend-dot seg-subagent" />
+            Subagent: {(subagentDuration / 1000).toFixed(1)}s ({pct(subagentDuration)}%)
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function PromptCard({
+  turn,
+  index,
+  previousTurnModel,
+  onOpenSubagent,
+}: {
+  turn: Turn;
+  index: number;
+  previousTurnModel?: string | null;
+  onOpenSubagent?: (nativeIdOrId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<TurnDetail | null>(null);
   const [error, setError] = useState('');
@@ -141,10 +410,34 @@ export function PromptCard({ turn, index }: { turn: Turn; index: number }) {
 
   const unpriced = detail?.calls.filter((c) => c.cost_reported == null && c.cost_estimated == null).length || 0;
 
+  const isModelSwitch = Boolean(
+    previousTurnModel && turn.models && turn.models !== previousTurnModel
+  );
+
+  const uncachedVal = turn.input_uncached ?? 0;
+  const cacheReadVal = turn.input_cache_read ?? 0;
+  const totalInput = uncachedVal + cacheReadVal;
+  const cachePct = totalInput > 0 ? Math.round((cacheReadVal / totalInput) * 100) : null;
+
   return (
     <article className="turn-card">
+      {isModelSwitch && (
+        <div className="model-switch-marker">
+          <span className="switch-icon">🔄</span>
+          <span>
+            Model switched from <strong>{previousTurnModel}</strong> to <strong>{turn.models}</strong>
+          </span>
+        </div>
+      )}
+
       <div className="turn-card-header">
         <span className="turn-badge">Turn #{index + 1}</span>
+        {turn.models && <span className="turn-model-badge">🤖 {turn.models}</span>}
+        {cachePct != null && (
+          <span className={`turn-cache-badge ${cachePct > 0 ? 'cached' : 'uncached'}`}>
+            {cachePct > 0 ? `⚡ ${cachePct}% cached` : '⏳ 0% cached'}
+          </span>
+        )}
         <span className={`status ${turn.status}`}>
           <i />
           {turn.status}
@@ -196,6 +489,8 @@ export function PromptCard({ turn, index }: { turn: Turn; index: number }) {
                 <span className="prompt-activity-sub">Activity breakdown for this prompt</span>
               </div>
 
+              <TurnLatencyWaterfall detail={detail} />
+
               <dl className="prompt-metrics">
                 {tokenFields.map(([field, label]) => (
                   <div key={field}>
@@ -239,7 +534,9 @@ export function PromptCard({ turn, index }: { turn: Turn; index: number }) {
               <div className="prompt-section">
                 <h4>Tools for this prompt</h4>
                 {detail.tools.length ? (
-                  detail.tools.map((tool) => <ToolCard key={tool.id} tool={tool} />)
+                  detail.tools.map((tool) => (
+                    <ToolCard key={tool.id} tool={tool} onOpenSubagent={onOpenSubagent} />
+                  ))
                 ) : (
                   <p className="empty-subtle">No tools were correlated with this prompt.</p>
                 )}

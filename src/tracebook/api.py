@@ -106,7 +106,7 @@ def create_api(
             params.append("%" + q + "%")
         params += [limit, offset]
         return store.rows(
-            "SELECT s.*,p.root project,(SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id AND t.kind='prompt') turns,(SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id) tools,(SELECT SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) FROM accounted_model_calls m WHERE m.session_id=s.id) tokens,(SELECT prompt FROM turns t WHERE t.session_id=s.id AND t.prompt IS NOT NULL ORDER BY started_at LIMIT 1) first_prompt FROM sessions s LEFT JOIN projects p ON p.id=s.project_id WHERE "
+            "SELECT s.*,p.root project,(SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id AND t.kind='prompt') turns,(SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id) tools,(SELECT SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) FROM accounted_model_calls m WHERE m.session_id=s.id) tokens,(SELECT prompt FROM turns t WHERE t.session_id=s.id AND t.prompt IS NOT NULL ORDER BY started_at LIMIT 1) first_prompt,(SELECT GROUP_CONCAT(DISTINCT model) FROM accounted_model_calls m WHERE m.session_id=s.id AND m.model IS NOT NULL) models FROM sessions s LEFT JOIN projects p ON p.id=s.project_id WHERE "
             + " AND ".join(filters)
             + " ORDER BY s.started_at DESC LIMIT ? OFFSET ?",
             tuple(params),
@@ -114,20 +114,64 @@ def create_api(
 
     @app.get("/api/sessions/{session_id}")
     async def session_detail(session_id: str) -> dict[str, Any]:
-        rows = store.rows("SELECT * FROM sessions WHERE id=?", (session_id,))
+        rows = store.rows(
+            "SELECT * FROM sessions WHERE id=? OR native_id=?", (session_id, session_id)
+        )
         if not rows:
             raise HTTPException(404, "Session not found")
+        session_row = rows[0]
+        actual_session_id = str(session_row["id"])
+        data_obj: dict[str, Any] = (
+            json.loads(session_row["data"]) if session_row.get("data") else {}
+        )
+        parent_native_id = data_obj.get("parent_native_id")
+        parent_session = None
+        if parent_native_id:
+            p_rows = store.rows(
+                "SELECT id, agent, native_id, started_at FROM sessions WHERE native_id=?",
+                (parent_native_id,),
+            )
+            if p_rows:
+                parent_session = p_rows[0]
+
+        subagents = store.rows(
+            "SELECT s.id, s.agent, s.native_id, s.started_at, s.data, "
+            "(SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id) turns, "
+            "(SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id) tools, "
+            "(SELECT SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) FROM accounted_model_calls m WHERE m.session_id=s.id) tokens "
+            "FROM sessions s WHERE json_extract(data, '$.parent_native_id') = ?",
+            (session_row["native_id"],),
+        )
+
+        turns_with_usage = store.rows(
+            "SELECT t.*, "
+            "COALESCE(SUM(m.input_uncached), 0) input_uncached, "
+            "COALESCE(SUM(m.input_cache_read), 0) input_cache_read, "
+            "COALESCE(SUM(m.input_cache_write), 0) input_cache_write, "
+            "COALESCE(SUM(m.output), 0) output, "
+            "COALESCE(SUM(m.reasoning), 0) reasoning, "
+            "COALESCE(SUM(COALESCE(m.cost_reported, m.cost_estimated)), 0) cost, "
+            "GROUP_CONCAT(DISTINCT m.model) models "
+            "FROM turns t "
+            "LEFT JOIN accounted_model_calls m ON m.turn_id = t.id "
+            "WHERE t.session_id = ? "
+            "GROUP BY t.id "
+            "ORDER BY t.started_at, t.id "
+            "LIMIT 1000",
+            (actual_session_id,),
+        )
+
         return {
-            **rows[0],
-            "turns": store.rows(
-                "SELECT * FROM turns WHERE session_id=? ORDER BY started_at,id LIMIT 1000",
-                (session_id,),
-            ),
+            **session_row,
+            "parent_session": parent_session,
+            "subagents": subagents,
+            "turns": turns_with_usage,
             "tools": store.rows(
-                "SELECT * FROM tool_calls WHERE session_id=? ORDER BY ts LIMIT 1000", (session_id,)
+                "SELECT * FROM tool_calls WHERE session_id=? ORDER BY ts LIMIT 1000",
+                (actual_session_id,),
             ),
             "findings": store.rows(
-                "SELECT * FROM findings WHERE session_id=? ORDER BY ts", (session_id,)
+                "SELECT * FROM findings WHERE session_id=? ORDER BY ts", (actual_session_id,)
             ),
         }
 
