@@ -113,7 +113,7 @@ cache_write = 1.0
 cache_write_by_ttl = { "300" = 1.0, "3600" = 1.6 }
 
 [models."google/gemini-flash"]
-aliases = ["gemini-flash", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "gemini-3.8-flash", "gemini-2.5-flash"]
+aliases = ["gemini-flash", "Gemini 3", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "gemini-3.8-flash", "gemini-2.5-flash", "Gemini 4 Argon (High)"]
 source = "https://ai.google.dev/pricing"
 input = 0.10
 output = 0.40
