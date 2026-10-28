@@ -2109,6 +2109,132 @@ details[open] summary::before {
   color: #366025;
 }
 
+/* Token Guide Card on Reports Page */
+.token-guide-card {
+  padding: 22px 24px;
+  margin-bottom: 24px;
+}
+
+.token-guide-header {
+  margin-bottom: 16px;
+}
+
+.token-guide-tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #3b6329;
+  background: #e7f2dd;
+  padding: 3px 8px;
+  border-radius: 5px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+
+.token-guide-header h3 {
+  font-size: 18px;
+  font-weight: 650;
+  color: #1a2c14;
+  margin-bottom: 4px;
+}
+
+.token-guide-header p {
+  font-size: 13.5px;
+  color: #4b6241;
+}
+
+.token-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.token-guide-item {
+  background: #f7faf4;
+  border: 1px solid #dce8d3;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.token-guide-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.token-guide-title strong {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #1a2d15;
+}
+
+.token-guide-item p {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #516847;
+  margin: 0;
+}
+
+.token-indicator {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.token-indicator.uncached { background: #3b7428; }
+.token-indicator.cache-read { background: #268078; }
+.token-indicator.cache-write { background: #8e6a2b; }
+.token-indicator.output { background: #9c451b; }
+.token-indicator.reasoning { background: #684294; }
+
+/* Quickhelp inside Report Modal */
+.report-token-quickhelp {
+  margin: 10px 0 6px;
+  padding: 10px 14px;
+  background: #f2f7ec;
+  border: 1px solid #d8e5cb;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #3b5c2a;
+}
+
+.report-token-quickhelp summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.report-token-quickhelp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #dde8d4;
+  font-size: 12px;
+  color: #4a633f;
+}
+
+.report-rendered blockquote {
+  margin: 16px 0;
+  padding: 12px 18px;
+  background: #f4f8ee;
+  border-left: 4px solid #4a7737;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: #2e4722;
+}
+
+.report-rendered blockquote p {
+  margin: 4px 0;
+}
+
+.report-rendered blockquote ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
 .empty-subtle {
   font-size: 13px;
   color: #637a58;
