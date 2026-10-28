@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict, deque
+from datetime import datetime
 from itertools import groupby
 
 from tracebook.model import Json, digest
 from tracebook.store import Store, encode
+
+
+def _parse_ts(ts_str: object) -> float:
+    if not isinstance(ts_str, str) or not ts_str:
+        return 0.0
+    try:
+        clean = ts_str.replace("Z", "+00:00")
+        return datetime.fromisoformat(clean).timestamp()
+    except Exception:
+        return 0.0
 
 
 def analyze(store: Store) -> int:
@@ -109,11 +120,20 @@ def _analyze(store: Store) -> int:
                 f"The agent executed the exact same tool input {total} times within this prompt. Unless external files changed, instruct the agent to reuse earlier results to save time and tokens.",
                 {"tool_ids": evidence_ids, "count": total, "threshold": 4},
             )
+    compaction_sessions: set[str] = {
+        str(row["session_id"])
+        for row in store.rows(
+            "SELECT DISTINCT session_id FROM events WHERE kind='compaction' AND session_id IS NOT NULL"
+        )
+    }
     calls = store.iter_rows(
         "SELECT id,agent,session_id,turn_id,ts,model,input_uncached,input_cache_read,cost_reported,cost_estimated,json_extract(data,'$.duration_ms') duration_ms FROM accounted_model_calls ORDER BY ts,id"
     )
     histories: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=200))
     unknown: dict[str, Json] = {}
+    session_calls: dict[str, list[Json]] = defaultdict(list)
+    session_had_cache: dict[str, bool] = defaultdict(bool)
+    session_last_cached: dict[str, Json] = {}
     for call in calls:
         if call["cost_reported"] is None and call["cost_estimated"] is None:
             model = str(call["model"] or "unknown")
@@ -123,24 +143,125 @@ def _analyze(store: Store) -> int:
             if len(group_info["ids"]) < 20:
                 group_info["ids"].append(call["id"])
         inp, cache = call["input_uncached"], call["input_cache_read"]
+        session_id = str(call.get("session_id") or "")
+        session_history = session_calls[session_id]
+        prev_call = session_history[-1] if session_history else None
+        call_seq = len(session_history) + 1
+        had_cache = session_had_cache[session_id]
+
         if (
-            inp is not None
-            and cache is not None
+            isinstance(inp, int)
+            and isinstance(cache, int)
             and inp >= 16000
             and cache / max(1, inp + cache) < 0.05
         ):
-            add(
-                "cache_opportunity",
-                call,
-                "Large uncached input",
-                f"Model processed {inp:,} uncached tokens with only {cache:,} cached tokens. Ensure stable prompt prefixes and shared context to benefit from provider prompt-cache discounts.",
-                {
+            delta_sec = (
+                max(0.0, _parse_ts(call.get("ts")) - _parse_ts(prev_call.get("ts")))
+                if prev_call
+                else 0.0
+            )
+            if delta_sec >= 3600:
+                hours = delta_sec / 3600
+                elapsed_str = f"{hours:.1f} hours" if hours < 10 else f"{round(hours)} hours"
+            elif delta_sec >= 60:
+                mins = delta_sec / 60
+                elapsed_str = f"{mins:.1f} minutes" if mins < 10 else f"{round(mins)} minutes"
+            else:
+                elapsed_str = f"{round(delta_sec)} seconds"
+
+            if had_cache and delta_sec >= 300:
+                cause = "cache_ttl_expired"
+                title = f"Cache TTL expired after {elapsed_str} idle pause"
+                rec = (
+                    f"Provider prompt cache expired after an idle pause of {elapsed_str} between prompts. "
+                    f"Model provider caches (e.g. Gemini/Claude) are ephemeral with a 5–60 minute inactivity TTL. "
+                    f"Resuming after this pause forced all {inp:,} tokens to be re-read uncached to re-warm the provider cache."
+                )
+                prev_c = prev_call.get("input_cache_read") if prev_call else 0
+                ev: Json = {
                     "model_call_ids": [call["id"]],
                     "input_uncached": inp,
                     "input_cache_read": cache,
+                    "root_cause": cause,
+                    "idle_seconds": round(delta_sec, 1),
+                    "idle_formatted": elapsed_str,
+                    "call_sequence": call_seq,
+                    "previous_cache_read": prev_c if isinstance(prev_c, int) else 0,
                     "threshold_tokens": 16000,
-                },
-            )
+                }
+            elif not had_cache and call_seq <= 8:
+                cause = "session_warmup"
+                title = f"Uncached input during initial warm-up ({inp:,} tokens)"
+                rec = (
+                    f"Initial session warm-up: turn #{call_seq} processed {inp:,} uncached tokens. "
+                    f"Model provider prefix caching (e.g. Gemini's ~32k token threshold) activates automatically once "
+                    f"enough shared context accumulates. Subsequent turns with stable prefixes will benefit from cache discounts."
+                )
+                ev = {
+                    "model_call_ids": [call["id"]],
+                    "input_uncached": inp,
+                    "input_cache_read": cache,
+                    "root_cause": cause,
+                    "call_sequence": call_seq,
+                    "threshold_tokens": 16000,
+                }
+            elif had_cache and delta_sec < 300:
+                cause = "transient_miss"
+                title = f"Transient cache miss or prompt prefix shift ({inp:,} tokens)"
+                prev_c = prev_call.get("input_cache_read") if prev_call else 0
+                prev_cache_val = prev_c if isinstance(prev_c, int) else 0
+                last_cached = session_last_cached.get(session_id)
+                compaction_note = (
+                    " Note: Context compaction was recorded in this session, which condenses earlier history into a summary and resets the prefix hash."
+                    if session_id in compaction_sessions
+                    else ""
+                )
+                if prev_cache_val > 0:
+                    prior_note = f"only {elapsed_str} elapsed since prior turn with {prev_cache_val:,} cached tokens"
+                elif last_cached:
+                    lc_val = last_cached.get("input_cache_read") or 0
+                    lc_tokens = lc_val if isinstance(lc_val, int) else 0
+                    prior_note = f"earlier turns in this session cached up to {lc_tokens:,} tokens"
+                else:
+                    prior_note = f"only {elapsed_str} elapsed since prior turn"
+                rec = (
+                    f"Cache miss occurred despite active session history ({prior_note}). "
+                    f"A dynamic prefix change (such as timestamps, variable instructions, or context summarization) or provider-side eviction "
+                    f"invalidated the prefix cache. Ensure stable prompt prefixes to maximize cache reuse.{compaction_note}"
+                )
+                ev = {
+                    "model_call_ids": [call["id"]],
+                    "input_uncached": inp,
+                    "input_cache_read": cache,
+                    "root_cause": cause,
+                    "elapsed_seconds": round(delta_sec, 1),
+                    "elapsed_formatted": elapsed_str,
+                    "call_sequence": call_seq,
+                    "previous_cache_read": prev_cache_val,
+                    "threshold_tokens": 16000,
+                }
+            else:
+                cause = "unstable_prefix"
+                title = f"Persistent uncached input: unstable prefix ({inp:,} tokens)"
+                rec = (
+                    f"Model processed {inp:,} uncached tokens with only {cache:,} cached tokens deep into the session (turn #{call_seq}). "
+                    f"The agent or harness is likely mutating the prompt prefix on every turn. "
+                    f"Ensure system instructions, tool definitions, and conversation prefixes remain immutable so the provider can cache them."
+                )
+                ev = {
+                    "model_call_ids": [call["id"]],
+                    "input_uncached": inp,
+                    "input_cache_read": cache,
+                    "root_cause": cause,
+                    "call_sequence": call_seq,
+                    "threshold_tokens": 16000,
+                }
+            add("cache_opportunity", call, title, rec, ev)
+
+        if isinstance(cache, int) and cache > 0:
+            session_had_cache[session_id] = True
+            session_last_cached[session_id] = call
+        session_calls[session_id].append(call)
         duration = call["duration_ms"]
         if isinstance(duration, (int, float)):
             history = histories[str(call["model"])]

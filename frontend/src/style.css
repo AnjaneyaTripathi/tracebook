@@ -1213,6 +1213,12 @@ footer > span:last-child {
   color: #5c4714;
 }
 
+.finding-metric-badge.info {
+  background: #f0f6ff;
+  border: 1px solid #c7dcfa;
+  color: #174ea6;
+}
+
 .finding-metric-badge.error {
   background: #fdf1ef;
   border: 1px solid #f7c9c6;

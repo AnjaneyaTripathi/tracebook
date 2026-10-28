@@ -94,10 +94,18 @@ function FindingCard({ finding, openSession }: { finding: Finding; openSession: 
   const isContextGrowth = finding.title.includes('Context grew');
   const isFailureLoop = finding.title.includes('Repeated tool failures');
   const isSlowTool = finding.title.includes('Tool took over');
+  const isCacheOpportunity = finding.detector === 'cache_opportunity';
 
   const minIn = typeof ev.min_input === 'number' ? ev.min_input : null;
   const maxIn = typeof ev.max_input === 'number' ? ev.max_input : null;
   const growthPct = minIn && maxIn ? Math.round(((maxIn - minIn) / Math.max(1, minIn)) * 100) : null;
+
+  const rootCause = typeof ev.root_cause === 'string' ? ev.root_cause : null;
+  const idleFormatted = typeof ev.idle_formatted === 'string' ? ev.idle_formatted : null;
+  const elapsedFormatted = typeof ev.elapsed_formatted === 'string' ? ev.elapsed_formatted : null;
+  const callSeq = typeof ev.call_sequence === 'number' ? ev.call_sequence : null;
+  const uncachedTokens = typeof ev.input_uncached === 'number' ? ev.input_uncached : null;
+  const prevCacheRead = typeof ev.previous_cache_read === 'number' ? ev.previous_cache_read : null;
 
   return (
     <article className="panel finding" key={finding.id}>
@@ -137,6 +145,49 @@ function FindingCard({ finding, openSession }: { finding: Finding; openSession: 
             <span className="metric-tag">⏱ Execution Delay</span>
             <strong>{(ev.duration_ms / 1000).toFixed(1)} seconds</strong>
             <span className="call-note">(threshold: 120s)</span>
+          </div>
+        )}
+
+        {isCacheOpportunity && (
+          <div className={`finding-metric-badge ${rootCause === 'session_warmup' ? 'info' : 'warning'}`}>
+            {rootCause === 'cache_ttl_expired' && (
+              <>
+                <span className="metric-tag">⏳ Cache TTL Expired</span>
+                <strong>{uncachedTokens != null ? number(uncachedTokens) : '—'} tokens uncached</strong>
+                <span className="call-note">after {idleFormatted || 'idle'} pause</span>
+              </>
+            )}
+            {rootCause === 'session_warmup' && (
+              <>
+                <span className="metric-tag">🌱 Session Warm-Up</span>
+                <strong>{uncachedTokens != null ? number(uncachedTokens) : '—'} tokens uncached</strong>
+                <span className="call-note">turn #{callSeq || 1} (pre-cache threshold)</span>
+              </>
+            )}
+            {rootCause === 'transient_miss' && (
+              <>
+                <span className="metric-tag">💨 Cache Miss</span>
+                <strong>{uncachedTokens != null ? number(uncachedTokens) : '—'} tokens uncached</strong>
+                <span className="call-note">
+                  {elapsedFormatted ? `${elapsedFormatted} after cached turn` : 'transient provider eviction'}
+                  {prevCacheRead ? ` (${number(prevCacheRead)} cached earlier)` : ''}
+                </span>
+              </>
+            )}
+            {rootCause === 'unstable_prefix' && (
+              <>
+                <span className="metric-tag">⚡ Unstable Prefix</span>
+                <strong>{uncachedTokens != null ? number(uncachedTokens) : '—'} tokens uncached</strong>
+                <span className="call-note">turn #{callSeq || 1} without cache reuse</span>
+              </>
+            )}
+            {!rootCause && (
+              <>
+                <span className="metric-tag">⚡ Uncached Input</span>
+                <strong>{uncachedTokens != null ? number(uncachedTokens) : '—'} tokens</strong>
+                <span className="call-note">(threshold: 16k)</span>
+              </>
+            )}
           </div>
         )}
 
