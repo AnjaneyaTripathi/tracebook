@@ -161,3 +161,33 @@ def test_antigravity_hook_subprocess(tmp_path: Path) -> None:
     assert pre_result.returncode == 0
     assert json.loads(pre_result.stdout.strip()) == {"decision": "allow"}
     assert pre_result.stderr == ""
+
+
+def test_antigravity_project_resolution(tmp_path: Path, monkeypatch: object) -> None:
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path))
+    adapter = AntigravityAdapter()
+
+    # When no database or cache exists
+    assert adapter.resolve_project("session-123") is None
+
+    # When conversation_summaries.db exists
+    import sqlite3
+
+    db_path = tmp_path / "conversation_summaries.db"
+    with sqlite3.connect(db_path) as con:
+        con.execute(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT)"
+        )
+        con.execute(
+            "INSERT INTO conversation_summaries VALUES (?, ?)",
+            ("session-123", json.dumps(["file:///home/user/workspace/test-repo"])),
+        )
+
+    resolved = adapter.resolve_project("session-123")
+    assert resolved == "/home/user/workspace/test-repo"
+
+    # Test parse_record populates cwd from resolve_project
+    state: dict[str, object] = {"session_id": "session-123"}
+    events = list(adapter.parse_record({"step_index": 0, "type": "USER_INPUT"}, state))
+    session_ev = next(e for e in events if e.kind == "session")
+    assert session_ev.data["cwd"] == "/home/user/workspace/test-repo"

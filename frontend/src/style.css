@@ -1181,6 +1181,115 @@ footer > span:last-child {
   color: #58714c;
 }
 
+.finding-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #27471b;
+}
+
+.finding-agent-badge .agent-mark {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  font-size: 11px;
+}
+
+.finding-metric-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin: 12px 0 14px;
+  font-size: 13.5px;
+  flex-wrap: wrap;
+}
+
+.finding-metric-badge.warning {
+  background: #fdfaf0;
+  border: 1px solid #ebdcb7;
+  color: #5c4714;
+}
+
+.finding-metric-badge.error {
+  background: #fdf1ef;
+  border: 1px solid #f7c9c6;
+  color: #8c241a;
+}
+
+.metric-tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.growth-tag {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #cf3f32;
+  color: #ffffff;
+}
+
+.call-note {
+  font-size: 12.5px;
+  color: #6d5b2c;
+  margin-left: auto;
+}
+
+.finding-explanation-box {
+  background: #f7faf4;
+  border: 1px solid #dce8d3;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 14px 0 16px;
+}
+
+.explanation-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #2b4f1e;
+  margin-bottom: 6px;
+}
+
+.recommendation-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1e3315;
+}
+
+.explanation-tips {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e1ecda;
+  font-size: 13px;
+  color: #3b5330;
+}
+
+.explanation-tips strong {
+  color: #1f3516;
+}
+
+.explanation-tips ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.explanation-tips li {
+  margin-bottom: 5px;
+  line-height: 1.5;
+}
+
 /* Status Badges */
 .status {
   display: inline-flex;
@@ -1840,7 +1949,7 @@ details[open] summary::before {
 /* Report Modal */
 .report-modal {
   margin: auto;
-  max-width: 900px;
+  max-width: 960px;
   width: 90vw;
   max-height: 90vh;
   overflow: auto;
@@ -1849,22 +1958,155 @@ details[open] summary::before {
   border: 1px solid #cbd8bf;
   padding: 0 32px 30px;
   box-shadow: 0 16px 48px rgba(18, 28, 14, 0.2);
+  display: flex;
+  flex-direction: column;
 }
 
-.report-modal .drawer-header {
+.report-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 24px 0 16px;
   border-bottom: 1px solid #e2ecd8;
+  gap: 16px;
 }
 
-.report-modal pre {
+.report-toggle-bar {
+  display: flex;
+  align-items: center;
+  background: #edf4e7;
+  border: 1px solid #d0dfc4;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.report-toggle-bar button {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #47633c;
+  border-radius: 6px;
+  border: 0;
+}
+
+.report-toggle-bar button.active {
+  background: #ffffff;
+  color: #1d3614;
+  box-shadow: 0 1px 3px rgba(29, 54, 20, 0.1);
+}
+
+.report-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+
+.report-rendered {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #1b2e15;
+}
+
+.report-rendered h1 {
+  font-family: Georgia, serif;
+  font-size: 26px;
+  font-weight: 650;
+  color: #162a12;
+  margin: 12px 0 14px;
+}
+
+.report-rendered h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #233e1a;
+  margin: 26px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e1ecda;
+}
+
+.report-rendered p {
+  margin: 10px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.report-rendered table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 24px;
+  border: 1px solid #d2dec6;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(27, 46, 21, 0.04);
+}
+
+.report-rendered th {
+  background: #f2f7ec;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #3b5b2c;
+  border-bottom: 1px solid #d8e3cc;
+  text-align: left;
+}
+
+.report-rendered td {
+  padding: 12px 16px;
   font-size: 13.5px;
+  border-bottom: 1px solid #e7efe0;
+  color: #1b2e15;
+}
+
+.report-rendered tr:nth-child(even) td {
+  background: #f9fbf7;
+}
+
+.report-rendered ul {
+  padding-left: 22px;
+  margin: 12px 0;
+}
+
+.report-rendered li {
+  margin: 6px 0;
+  line-height: 1.6;
+}
+
+.report-rendered code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12.5px;
+  background: #eaf2e3;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #d2e0cb;
+}
+
+.report-raw {
+  font-size: 13px;
   line-height: 1.7;
   color: #182b13;
   background: #f5f8f1;
   border: 1px solid #dbe6d1;
   border-radius: 8px;
   padding: 20px;
-  margin: 20px 0;
+  margin: 10px 0;
+  max-height: 600px;
+  overflow: auto;
+}
+
+.report-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2ecd8;
+  margin-top: auto;
+}
+
+.copy-report-btn {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #366025;
 }
 
 .empty-subtle {

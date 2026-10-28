@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { marked } from 'marked';
 import type { Adapter, CanonicalEvent, Finding, Overview, Report, Session, SessionDetail } from './types';
 import { PromptCard, ToolCard } from './PromptCard';
 import './style.css';
@@ -81,6 +82,102 @@ function Empty({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+function FindingCard({ finding, openSession }: { finding: Finding; openSession: (id: string) => Promise<void> }) {
+  const ev = (() => {
+    try {
+      return JSON.parse(finding.evidence) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  })();
+
+  const isContextGrowth = finding.title.includes('Context grew');
+  const isFailureLoop = finding.title.includes('Repeated tool failures');
+  const isSlowTool = finding.title.includes('Tool took over');
+
+  const minIn = typeof ev.min_input === 'number' ? ev.min_input : null;
+  const maxIn = typeof ev.max_input === 'number' ? ev.max_input : null;
+  const growthPct = minIn && maxIn ? Math.round(((maxIn - minIn) / Math.max(1, minIn)) * 100) : null;
+
+  return (
+    <article className="panel finding" key={finding.id}>
+      <div className="finding-icon">✳</div>
+      <div className="finding-main">
+        <div className="finding-meta">
+          <Status value={finding.severity} />
+          <span className="finding-agent-badge">
+            <Mark agent={finding.agent} /> {names[finding.agent] || finding.agent}
+          </span>
+          <span className="finding-time">{date(finding.ts)}</span>
+        </div>
+
+        <h2>{finding.title}</h2>
+
+        {isContextGrowth && minIn != null && maxIn != null && (
+          <div className="finding-metric-badge warning">
+            <span className="metric-tag">📈 Context Surge</span>
+            <strong>{number(minIn)} tokens</strong>
+            <span className="arrow">➔</span>
+            <strong>{number(maxIn)} tokens</strong>
+            {growthPct != null && <span className="growth-tag">+{growthPct}%</span>}
+            <span className="call-note">across {String(ev.call_count || 'multiple')} model calls</span>
+          </div>
+        )}
+
+        {isFailureLoop && (
+          <div className="finding-metric-badge error">
+            <span className="metric-tag">🔁 Loop Detected</span>
+            <strong>{String(ev.count || 3)} consecutive failures</strong>
+            <span className="call-note">with identical tool input</span>
+          </div>
+        )}
+
+        {isSlowTool && typeof ev.duration_ms === 'number' && (
+          <div className="finding-metric-badge warning">
+            <span className="metric-tag">⏱ Execution Delay</span>
+            <strong>{(ev.duration_ms / 1000).toFixed(1)} seconds</strong>
+            <span className="call-note">(threshold: 120s)</span>
+          </div>
+        )}
+
+        <div className="finding-explanation-box">
+          <div className="explanation-section">
+            <div className="explanation-header">
+              <span className="explanation-icon">💡</span>
+              <strong>Analysis & Recommended Action</strong>
+            </div>
+            <p className="recommendation-text">{finding.recommendation}</p>
+          </div>
+
+          {isContextGrowth && (
+            <div className="explanation-tips">
+              <strong>Why this happens & what you can do:</strong>
+              <ul>
+                <li>
+                  <strong>Why it matters:</strong> As an agent reads long terminal outputs or entire files, each
+                  subsequent message re-sends that entire accumulated history, increasing cost and response latency.
+                </li>
+                <li>
+                  <strong>Action:</strong> If you are done with that task, start a fresh session (<code>/new</code>) to
+                  reset context, or compact conversation history.
+                </li>
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <details>
+          <summary>Inspect rule evidence</summary>
+          <pre>{JSON.stringify(ev, null, 2)}</pre>
+        </details>
+      </div>
+      <button className="text-button finding-action-btn" onClick={() => void openSession(finding.session_id)}>
+        View session ↗
+      </button>
+    </article>
+  );
+}
+
 function App() {
   const [page, setPage] = useState<Page>('Overview');
   const [agent, setAgent] = useState('');
@@ -94,6 +191,7 @@ function App() {
   const [events, setEvents] = useState<CanonicalEvent[]>([]);
   const [detailTab, setDetailTab] = useState('Prompts');
   const [reportBody, setReportBody] = useState('');
+  const [reportFormat, setReportFormat] = useState<'formatted' | 'raw'>('formatted');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -215,6 +313,7 @@ function App() {
         body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
       });
       setReportBody(result.body);
+      setReportFormat('formatted');
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -227,6 +326,7 @@ function App() {
     try {
       const result = await api<Report>(`/reports/${id}`);
       setReportBody(result.body || '');
+      setReportFormat('formatted');
     } catch (e) {
       setError(String(e));
     }
@@ -647,28 +747,7 @@ function App() {
           {page === 'Findings' && (
             <div className="findings-list">
               {findings.length ? (
-                findings.map((f) => (
-                  <article className="panel finding" key={f.id}>
-                    <div className="finding-icon">✳</div>
-                    <div className="finding-main">
-                      <div className="finding-meta">
-                        <Status value={f.severity} />
-                        <span>
-                          {names[f.agent] || f.agent} · {date(f.ts)}
-                        </span>
-                      </div>
-                      <h2>{f.title}</h2>
-                      <p>{f.recommendation}</p>
-                      <details>
-                        <summary>Inspect rule evidence</summary>
-                        <pre>{JSON.stringify(JSON.parse(f.evidence), null, 2)}</pre>
-                      </details>
-                    </div>
-                    <button className="text-button" onClick={() => void openSession(f.session_id)}>
-                      View session ↗
-                    </button>
-                  </article>
-                ))
+                findings.map((f) => <FindingCard key={f.id} finding={f} openSession={openSession} />)
               ) : (
                 <Empty title="No signals to review">
                   <p>No rules have triggered for this selection. Coverage determines what can be detected.</p>
@@ -844,26 +923,68 @@ function App() {
             aria-label="Generated report"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="drawer-header">
-              <h2>Your activity report</h2>
+            <div className="drawer-header report-modal-header">
+              <div>
+                <span className="eyebrow">CONSOLIDATED REPORT</span>
+                <h2>Your activity report</h2>
+              </div>
+              <div className="report-toggle-bar" role="group" aria-label="Report format">
+                <button
+                  type="button"
+                  className={reportFormat === 'formatted' ? 'active' : ''}
+                  onClick={() => setReportFormat('formatted')}
+                >
+                  📄 Formatted
+                </button>
+                <button
+                  type="button"
+                  className={reportFormat === 'raw' ? 'active' : ''}
+                  onClick={() => setReportFormat('raw')}
+                >
+                  📝 Raw Markdown
+                </button>
+              </div>
               <button className="icon-button" aria-label="Close report" onClick={() => setReportBody('')}>
                 ×
               </button>
             </div>
-            <pre>{reportBody}</pre>
-            <button
-              className="primary"
-              onClick={() => {
-                const url = URL.createObjectURL(new Blob([reportBody], { type: 'text/markdown' }));
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'tracebook-report.md';
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              Download Markdown ↓
-            </button>
+
+            <div className="report-modal-content">
+              {reportFormat === 'formatted' ? (
+                <div
+                  className="report-rendered"
+                  dangerouslySetInnerHTML={{
+                    __html: marked.parse(reportBody, { async: false }) as string,
+                  }}
+                />
+              ) : (
+                <pre className="report-raw">{reportBody}</pre>
+              )}
+            </div>
+
+            <div className="report-modal-footer">
+              <button
+                className="primary"
+                onClick={() => {
+                  const url = URL.createObjectURL(new Blob([reportBody], { type: 'text/markdown' }));
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'tracebook-report.md';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                Download Markdown ↓
+              </button>
+              <button
+                className="text-button copy-report-btn"
+                onClick={() => {
+                  void navigator.clipboard.writeText(reportBody);
+                }}
+              >
+                Copy Markdown
+              </button>
+            </div>
           </section>
         </div>
       )}

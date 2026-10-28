@@ -54,11 +54,12 @@ def _analyze(store: Store) -> int:
         f"SELECT {fields} FROM tool_calls WHERE duration_ms>120000 ORDER BY ts,id"
     ):
         if tool["duration_ms"] and tool["duration_ms"] > 120000:
+            sec = round(tool["duration_ms"] / 1000, 1)
             add(
                 "slow_tool",
                 tool,
                 "Tool took over two minutes",
-                "Inspect the command and its output; consider a narrower operation or an explicit timeout.",
+                f"Tool execution took {sec}s (threshold: 120s). Consider narrowing operations, avoiding massive tree scans, or setting a timeout.",
                 {
                     "tool_ids": [tool["id"]],
                     "duration_ms": tool["duration_ms"],
@@ -90,7 +91,7 @@ def _analyze(store: Store) -> int:
                 "failure_loop",
                 latest,
                 "Repeated tool failures",
-                "Inspect the first failure before retrying the same input. Fix its cause or change the approach.",
+                f"The agent attempted the same tool operation {failures} times consecutively and failed each time. Inspect the error in the session trace and provide a clarifying hint or correct the failing file path/command.",
                 {"tool_ids": failure_ids, "count": failures, "threshold": 3},
                 "warning",
             )
@@ -105,7 +106,7 @@ def _analyze(store: Store) -> int:
                 "repeated_tool",
                 latest,
                 "Same tool input repeated",
-                "Check whether the underlying state changed. Reuse earlier results when it has not.",
+                f"The agent executed the exact same tool input {total} times within this prompt. Unless external files changed, instruct the agent to reuse earlier results to save time and tokens.",
                 {"tool_ids": evidence_ids, "count": total, "threshold": 4},
             )
     calls = store.iter_rows(
@@ -132,7 +133,7 @@ def _analyze(store: Store) -> int:
                 "cache_opportunity",
                 call,
                 "Large uncached input",
-                "Inspect changing prompt prefixes and cache eligibility. A first request or a changed context can explain this.",
+                f"Model processed {inp:,} uncached tokens with only {cache:,} cached tokens. Ensure stable prompt prefixes and shared context to benefit from provider prompt-cache discounts.",
                 {
                     "model_call_ids": [call["id"]],
                     "input_uncached": inp,
@@ -150,7 +151,7 @@ def _analyze(store: Store) -> int:
                         "latency_outlier",
                         call,
                         "Model response slower than its baseline",
-                        "Inspect retries, context size and provider latency before changing the model.",
+                        f"Model response took {round(duration / 1000, 1)}s, more than 3x the baseline median of {round(baseline / 1000, 1)}s. Check for provider latency, congestion, or unusually large context.",
                         {
                             "model_call_ids": [call["id"]],
                             "duration_ms": duration,
@@ -166,7 +167,7 @@ def _analyze(store: Store) -> int:
             "unknown_price",
             info["latest"],
             f"No price for {model}",
-            "Add verified rates and aliases to pricing.toml, then run reanalyze. Unknown cost remains null.",
+            f"{info['count']} model calls used '{model}' without a verified rate. Add rates to ~/.tracebook/pricing.toml and run 'tracebook reanalyze' to enable cost tracking.",
             {"model": model, "call_count": info["count"], "model_call_ids": info["ids"]},
         )
     for row in store.iter_rows(
@@ -179,16 +180,19 @@ def _analyze(store: Store) -> int:
                 (row["turn_id"],),
             )
         ]
+        min_in = int(row["min_input"])
+        max_in = int(row["max_input"])
+        growth_pct = int(((max_in - min_in) / max(1, min_in)) * 100)
         add(
             "context_growth",
             row,
             "Context grew substantially within one prompt",
-            "Inspect large tool responses and repeated file reads. Narrow the scope of subsequent requests.",
+            f"Context surged from {min_in:,} to {max_in:,} tokens (+{growth_pct}%) across {row['count']} calls in this prompt. Tool outputs or files accumulated in memory. Subsequent prompts in this session will re-send this larger context. Consider starting a new session or compacting history once this sub-task is complete.",
             {
                 "model_call_ids": ids,
                 "call_count": row["count"],
-                "min_input": row["min_input"],
-                "max_input": row["max_input"],
+                "min_input": min_in,
+                "max_input": max_in,
                 "multiplier": 3,
             },
         )
@@ -199,7 +203,7 @@ def _analyze(store: Store) -> int:
             "compaction_churn",
             row,
             "Repeated context compaction",
-            "Inspect large inputs and consider splitting the task into smaller independent prompts.",
+            f"Context was compacted {row['count']} times in this prompt. The conversation is near the model context window limit. Consider splitting the task or starting a fresh session.",
             {"count": row["count"], "threshold": 3},
             "warning",
         )

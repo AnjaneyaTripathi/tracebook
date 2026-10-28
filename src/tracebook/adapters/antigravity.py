@@ -37,6 +37,49 @@ class AntigravityAdapter(Adapter):
                 return parts[idx + 1]
         return Path(source.path).parent.parent.name
 
+    def resolve_project(self, session_id: str) -> str | None:
+        if not session_id or session_id == "unknown":
+            return None
+
+        # 1. Look in conversation_summaries.db
+        db_path = self.root() / "conversation_summaries.db"
+        if db_path.is_file():
+            try:
+                import json
+                import sqlite3
+
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as con:
+                    row = con.execute(
+                        "SELECT workspace_uris FROM conversation_summaries WHERE conversation_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    if row and row[0]:
+                        uris = json.loads(row[0])
+                        if isinstance(uris, list) and uris:
+                            first_uri = str(uris[0])
+                            if first_uri.startswith("file://"):
+                                return first_uri[7:]
+                            return first_uri
+            except Exception:
+                pass
+
+        # 2. Look in cache/last_conversations.json
+        cache_file = self.root() / "cache" / "last_conversations.json"
+        if cache_file.is_file():
+            try:
+                import json
+
+                with cache_file.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        for directory, cid in data.items():
+                            if cid == session_id:
+                                return str(directory)
+            except Exception:
+                pass
+
+        return None
+
     def capabilities(self) -> Capabilities:
         return Capabilities(
             transcripts="yes",
@@ -74,6 +117,9 @@ class AntigravityAdapter(Adapter):
         step_index = record.get("step_index", 0)
         typ = record.get("type")
         session_id = str(state.get("session_id", "unknown"))
+
+        if not state.get("cwd"):
+            state["cwd"] = self.resolve_project(session_id)
 
         if not state.get("session_emitted"):
             state["session_emitted"] = True
