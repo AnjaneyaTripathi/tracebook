@@ -118,13 +118,12 @@ windows end at the configured local hour and handle DST. Missed windows catch up
 after restart; identical windows and channel deliveries deduplicate locally.
 
 Session lists read from a `session_summaries` rollup that is updated as events
-arrive, so the dashboard stays responsive with many sessions. Sessions that
-started within `detail_days` (default `30`) open with full prompts, tools and
-evidence; older ones open as a summary only. Raw rows are never deleted. Set
-`detail_days = 0` to keep full detail for every session. Sessions with no
-recorded token usage are hidden from the list unless "Show sessions with no
-usage" is ticked. The session table sorts by agent, project, activity, tokens,
-value and start time, and filters by project, model, date range and text.
+arrive, so the dashboard stays responsive with many sessions. Everything stays
+in the database and every session opens in full. The session table defaults to
+the last 30 days; widen it with the "Started" filter (24 hours to all time).
+Sessions with no recorded token usage are hidden unless "Show sessions with no
+usage" is ticked. The table sorts by agent, project, activity, tokens, value
+and start time, and filters by project, model, date range and text.
 
 ```sh
 uv run tracebook report --from 2026-10-24 --to 2026-10-25

@@ -514,7 +514,7 @@ def test_api_filters_details_and_origin_protection(store: Store, tmp_path):
     seed(store)
     analyze(store)
     client = TestClient(
-        create_api(store, Config(root=tmp_path, detail_days=0), adapters()),
+        create_api(store, Config(root=tmp_path), adapters()),
         base_url="http://127.0.0.1:8742",
     )
     assert client.get("/api/health").json()["ok"]
@@ -623,28 +623,21 @@ def test_summary_follows_later_events_and_repricing(store: Store, tmp_path):
     assert store.rows("SELECT tools FROM session_summaries")[0]["tools"] == 1
 
 
-def test_sessions_past_detail_window_serve_summary_only(store: Store, tmp_path):
-    old = datetime.now(UTC) - timedelta(days=90)
-    ingest_session(store, "old", old, 900)
+def test_old_sessions_stay_stored_and_a_window_is_a_filter(store: Store, tmp_path):
+    ingest_session(store, "old", datetime.now(UTC) - timedelta(days=90), 900)
     ingest_session(store, "new", datetime.now(UTC), 100)
     client = TestClient(
-        create_api(store, Config(root=tmp_path, detail_days=30), adapters()),
-        base_url="http://127.0.0.1:8742",
+        create_api(store, Config(root=tmp_path), adapters()), base_url="http://127.0.0.1:8742"
     )
-    listed = {r["first_prompt"]: r for r in client.get("/api/sessions").json()}
-    assert listed["Task old"]["detail"] is False and listed["Task new"]["detail"] is True
-    archived = client.get(f"/api/sessions/{listed['Task old']['id']}").json()
-    assert archived["detail"] is False and archived["turns"] == []
-    assert archived["summary"]["tokens"] == 900
-    current = client.get(f"/api/sessions/{listed['Task new']['id']}").json()
-    assert current["detail"] is True and len(current["turns"]) == 1
-    # Prompt text search skips archived sessions' raw rows but still matches their summary.
+    assert len(client.get("/api/sessions").json()) == 2
+    since = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    recent = client.get("/api/sessions", params={"since": since})
+    assert [r["first_prompt"] for r in recent.json()] == ["Task new"]
+    assert recent.headers["X-Total-Count"] == "1"
+    old = next(r for r in client.get("/api/sessions").json() if r["first_prompt"] == "Task old")
+    detail = client.get(f"/api/sessions/{old['id']}").json()
+    assert len(detail["turns"]) == 1 and "summary" not in detail
     assert len(client.get("/api/sessions?q=Task").json()) == 2
-    everything = TestClient(
-        create_api(store, Config(root=tmp_path, detail_days=0), adapters()),
-        base_url="http://127.0.0.1:8742",
-    )
-    assert everything.get(f"/api/sessions/{listed['Task old']['id']}").json()["detail"] is True
 
 
 def test_summaries_backfill_for_databases_created_before_them(tmp_path: Path):

@@ -104,7 +104,10 @@ test('session table sorts, filters and hides sessions without usage', async ({ p
   expect((await column()).length).toBe(25);
   await page.getByLabel('Project').selectOption({ label: 'design-system (14)' });
   await expect(page.getByText('1–14 of 14')).toBeVisible();
+  await expect(page.getByLabel('Started')).toHaveValue('30');
+  await page.getByLabel('Started').selectOption('');
   await page.getByRole('button', { name: 'Reset' }).click();
+  await expect(page.getByLabel('Started')).toHaveValue('30');
   await expect(page.getByText('(1 hidden)')).toBeVisible();
   await page.getByLabel('Show sessions with no usage').check();
   await expect(page.getByText('1–25 of 43')).toBeVisible();

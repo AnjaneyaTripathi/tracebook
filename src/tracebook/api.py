@@ -133,14 +133,9 @@ def create_api(
                 for column in ("s.first_prompt", "s.project", "s.models", "s.native_id")
             ]
             params += [like] * len(clauses)
-            # Full prompt search only walks sessions that still have detail rows.
-            cutoff = config.detail_cutoff
             clauses.append(
-                ("(s.started_at>=? AND " if cutoff else "(")
-                + "EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.prompt LIKE ? ESCAPE '\\'))"
+                "EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.prompt LIKE ? ESCAPE '\\')"
             )
-            if cutoff:
-                params.append(cutoff)
             params.append(like)
             filters.append("(" + " OR ".join(clauses) + ")")
         return " AND ".join(filters), params
@@ -168,7 +163,6 @@ def create_api(
             "empty_sessions": store.rows("SELECT COUNT(*) n FROM session_summaries WHERE tokens=0")[
                 0
             ]["n"],
-            "detail_days": config.detail_days,
         }
 
     @app.get("/api/sessions")
@@ -197,14 +191,10 @@ def create_api(
             f"SELECT COUNT(*) n FROM session_summaries s WHERE {where}", tuple(params)
         )
         response.headers["X-Total-Count"] = str(total[0]["n"])
-        cutoff = config.detail_cutoff
-        return [
-            {**row, "detail": cutoff is None or str(row["started_at"] or "") >= cutoff}
-            for row in store.rows(
-                f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
-                (*params, limit, offset),
-            )
-        ]
+        return store.rows(
+            f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
 
     @app.get("/api/sessions/{session_id}")
     async def session_detail(session_id: str) -> dict[str, Any]:
@@ -234,23 +224,6 @@ def create_api(
             "FROM session_summaries m JOIN sessions s ON s.id=m.id WHERE m.parent_native_id = ?",
             (session_row["native_id"],),
         )
-        summary = store.rows("SELECT * FROM session_summaries WHERE id=?", (actual_session_id,))[0]
-        cutoff = config.detail_cutoff
-        if cutoff and str(session_row["started_at"] or "") < cutoff:
-            # Past the detail window: only the rollup is served; raw rows are not scanned.
-            return {
-                **session_row,
-                "detail": False,
-                "summary": summary,
-                "parent_session": parent_session,
-                "subagents": subagents,
-                "turns": [],
-                "tools": [],
-                "findings": store.rows(
-                    "SELECT * FROM findings WHERE session_id=? ORDER BY ts", (actual_session_id,)
-                ),
-            }
-
         turns_with_usage = store.rows(
             "SELECT t.*, "
             "COALESCE(SUM(m.input_uncached), 0) input_uncached, "
@@ -271,8 +244,6 @@ def create_api(
 
         return {
             **session_row,
-            "detail": True,
-            "summary": summary,
             "parent_session": parent_session,
             "subagents": subagents,
             "turns": turns_with_usage,

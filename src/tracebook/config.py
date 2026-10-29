@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 from tracebook.model import utc
 from tracebook.platform import home
 
+RECENT_DAYS = 30
+
 
 @dataclass(slots=True)
 class Config:
@@ -27,18 +29,15 @@ class Config:
     timezone: str = "UTC"
     delivery: dict[str, Any] = field(default_factory=dict)
     metadata_env: list[str] = field(default_factory=list)
-    detail_days: int = 30
 
     @property
     def database(self) -> Path:
         return self.root / "tracebook.sqlite3"
 
-    @property
-    def detail_cutoff(self) -> str | None:
-        """Sessions starting before this timestamp are served from summaries only."""
-        if not self.detail_days:
-            return None
-        return utc((datetime.now(UTC) - timedelta(days=self.detail_days)).isoformat())
+    @staticmethod
+    def recent_cutoff() -> str:
+        """Start of the recent window used to bound routine background work."""
+        return utc((datetime.now(UTC) - timedelta(days=RECENT_DAYS)).isoformat())
 
     @classmethod
     def load(cls, root: Path | None = None) -> Config:
@@ -58,7 +57,6 @@ class Config:
                 "timezone",
                 "delivery",
                 "metadata_env",
-                "detail_days",
             ):
                 if key in data:
                     setattr(result, key, data[key])
@@ -83,8 +81,6 @@ class Config:
         for pattern in result.redact_patterns:
             re.compile(pattern)
         ZoneInfo(result.timezone)
-        if type(result.detail_days) is not int or result.detail_days < 0:
-            raise ValueError("detail_days must be a non-negative integer (0 keeps full detail)")
         if not isinstance(result.delivery, dict):
             raise ValueError("Delivery must be a table of configured channels")
         if not isinstance(result.metadata_env, list) or any(
