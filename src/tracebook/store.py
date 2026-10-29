@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS adapter_state(id TEXT PRIMARY KEY, path TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS findings(id TEXT PRIMARY KEY, detector TEXT NOT NULL, severity TEXT NOT NULL, agent TEXT, session_id TEXT, turn_id TEXT, ts TEXT NOT NULL, title TEXT NOT NULL, evidence TEXT NOT NULL, recommendation TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY, window_start TEXT NOT NULL, window_end TEXT NOT NULL, created_at TEXT NOT NULL, body TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY, report_id TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt TEXT NOT NULL, last_error TEXT);
-CREATE TABLE IF NOT EXISTS session_summaries(id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_id TEXT NOT NULL, project_id TEXT, project TEXT, started_at TEXT, ended_at TEXT, resumed INTEGER NOT NULL DEFAULT 0, is_subagent INTEGER NOT NULL DEFAULT 0, subagent_role TEXT, parent_native_id TEXT, turns INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0, input_uncached INTEGER NOT NULL DEFAULT 0, input_cache_read INTEGER NOT NULL DEFAULT 0, input_cache_write INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, cost REAL, models TEXT, first_prompt TEXT, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS session_summaries(id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_id TEXT NOT NULL, project_id TEXT, project TEXT, started_at TEXT, ended_at TEXT, resumed INTEGER NOT NULL DEFAULT 0, is_subagent INTEGER NOT NULL DEFAULT 0, subagent_role TEXT, parent_native_id TEXT, turns INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0, input_uncached INTEGER NOT NULL DEFAULT 0, input_cache_read INTEGER NOT NULL DEFAULT 0, input_cache_write INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, cost REAL, cost_reported REAL, models TEXT, first_prompt TEXT, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_summaries_started ON session_summaries(started_at);
 CREATE INDEX IF NOT EXISTS idx_summaries_agent ON session_summaries(agent,started_at);
 CREATE INDEX IF NOT EXISTS idx_summaries_project ON session_summaries(project_id,started_at);
@@ -72,15 +72,15 @@ CREATE VIEW IF NOT EXISTS accounted_model_calls AS SELECT m.* FROM model_calls m
  (SELECT 1 FROM model_calls n WHERE n.session_id=m.session_id AND n.turn_id IS m.turn_id AND n.usage_format='response'));
 """
 TOKEN_SUM = "COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)"
-SUMMARY_SQL = f"""INSERT OR REPLACE INTO session_summaries
+SUMMARY_SQL = f"""INSERT OR REPLACE INTO session_summaries(id,agent,native_id,project_id,project,started_at,ended_at,resumed,is_subagent,subagent_role,parent_native_id,turns,tools,calls,input_uncached,input_cache_read,input_cache_write,output,reasoning,tokens,cost,cost_reported,models,first_prompt,updated_at)
 SELECT s.id,s.agent,s.native_id,s.project_id,p.root,s.started_at,s.ended_at,s.resumed,
  COALESCE(json_extract(s.data,'$.is_subagent'),0),json_extract(s.data,'$.subagent_role'),json_extract(s.data,'$.parent_native_id'),
  (SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id AND t.kind='prompt'),
  (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id),
- COALESCE(u.calls,0),COALESCE(u.input_uncached,0),COALESCE(u.input_cache_read,0),COALESCE(u.input_cache_write,0),COALESCE(u.output,0),COALESCE(u.reasoning,0),COALESCE(u.tokens,0),u.cost,u.models,
+ COALESCE(u.calls,0),COALESCE(u.input_uncached,0),COALESCE(u.input_cache_read,0),COALESCE(u.input_cache_write,0),COALESCE(u.output,0),COALESCE(u.reasoning,0),COALESCE(u.tokens,0),u.cost,u.cost_reported,u.models,
  (SELECT substr(prompt,1,200) FROM turns t WHERE t.session_id=s.id AND t.prompt IS NOT NULL ORDER BY started_at LIMIT 1),?
 FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
-LEFT JOIN (SELECT session_id,COUNT(*) calls,COALESCE(SUM(input_uncached),0) input_uncached,COALESCE(SUM(input_cache_read),0) input_cache_read,COALESCE(SUM(input_cache_write),0) input_cache_write,COALESCE(SUM(output),0) output,COALESCE(SUM(reasoning),0) reasoning,SUM({TOKEN_SUM}) tokens,SUM(COALESCE(cost_reported,cost_estimated)) cost,GROUP_CONCAT(DISTINCT model) models FROM accounted_model_calls WHERE session_id IN ({{ids}}) GROUP BY session_id) u ON u.session_id=s.id
+LEFT JOIN (SELECT session_id,COUNT(*) calls,COALESCE(SUM(input_uncached),0) input_uncached,COALESCE(SUM(input_cache_read),0) input_cache_read,COALESCE(SUM(input_cache_write),0) input_cache_write,COALESCE(SUM(output),0) output,COALESCE(SUM(reasoning),0) reasoning,SUM({TOKEN_SUM}) tokens,SUM(COALESCE(cost_reported,cost_estimated)) cost,SUM(cost_reported) cost_reported,GROUP_CONCAT(DISTINCT model) models FROM accounted_model_calls WHERE session_id IN ({{ids}}) GROUP BY session_id) u ON u.session_id=s.id
 WHERE s.id IN ({{ids}})"""
 RANK = {"process": 1, "import": 1, "hook": 2, "transcript": 3, "otel": 4}
 
@@ -138,6 +138,12 @@ class Store:
         if version > 1:
             raise ValueError(f"Database schema {version} is newer than this Tracebook")
         self.db.executescript(SCHEMA)
+        if "cost_reported" not in {
+            r[1] for r in self.db.execute("PRAGMA table_info(session_summaries)")
+        }:
+            # Summaries created before reported-only cost existed are rebuilt below.
+            self.db.execute("ALTER TABLE session_summaries ADD COLUMN cost_reported REAL")
+            self.dirty_sessions.update(r[0] for r in self.db.execute("SELECT id FROM sessions"))
         self.db.execute("INSERT OR IGNORE INTO migrations VALUES(1,?)", (now(),))
         self.db.execute("PRAGMA user_version=1")
         # Databases created before summaries existed: roll up whatever is missing once.
@@ -538,7 +544,7 @@ class Store:
             )[0]["n"]
         usage.update(counts)
         usage["agents"] = self.rows(
-            f"SELECT agent,COUNT(*) calls,SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) tokens,SUM(COALESCE(cost_reported,cost_estimated)) value FROM accounted_model_calls WHERE {where} GROUP BY agent",
+            f"SELECT agent,COUNT(*) calls,SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) tokens,SUM(COALESCE(cost_reported,cost_estimated)) value,SUM(cost_reported) reported FROM accounted_model_calls WHERE {where} GROUP BY agent",
             args,
         )
         usage["daily"] = self.rows(

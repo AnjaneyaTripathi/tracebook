@@ -50,9 +50,13 @@ def create_api(
     app.add_middleware(LocalOnlyMiddleware)
     pricing_enabled = config.pricing_enabled
 
-    def without_cost(row: dict[str, Any], *keys: str) -> dict[str, Any]:
-        """Cost and value figures are only exposed when pricing is explicitly enabled."""
+    def without_estimates(row: dict[str, Any], *keys: str) -> dict[str, Any]:
+        """Estimated figures come from pricing.toml and are only exposed when pricing is enabled."""
         return row if pricing_enabled else {**row, **dict.fromkeys(keys)}
+
+    def reported_only(row: dict[str, Any], total: str, reported: str) -> dict[str, Any]:
+        """Without pricing, a total counts only what agents themselves reported."""
+        return row if pricing_enabled else {**row, total: row.get(reported)}
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -70,8 +74,8 @@ def create_api(
     ) -> dict[str, Any]:
         usage = store.overview(start, end, agent)
         if not pricing_enabled:
-            usage = without_cost(usage, "cost_reported", "cost_estimated", "unpriced_calls")
-            usage["agents"] = [without_cost(a, "value") for a in usage["agents"]]
+            usage = without_estimates(usage, "cost_estimated", "unpriced_calls")
+            usage["agents"] = [reported_only(a, "value", "reported") for a in usage["agents"]]
         return {**usage, "billing_mode": config.billing_mode, "pricing_enabled": pricing_enabled}
 
     @app.get("/api/adapters")
@@ -201,7 +205,7 @@ def create_api(
         )
         response.headers["X-Total-Count"] = str(total[0]["n"])
         return [
-            without_cost(row, "cost")
+            reported_only(row, "cost", "cost_reported")
             for row in store.rows(
                 f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
                 (*params, limit, offset),
@@ -244,6 +248,7 @@ def create_api(
             "COALESCE(SUM(m.output), 0) output, "
             "COALESCE(SUM(m.reasoning), 0) reasoning, "
             "COALESCE(SUM(COALESCE(m.cost_reported, m.cost_estimated)), 0) cost, "
+            "SUM(m.cost_reported) cost_reported, "
             "GROUP_CONCAT(DISTINCT m.model) models "
             "FROM turns t "
             "LEFT JOIN accounted_model_calls m ON m.turn_id = t.id "
@@ -258,7 +263,7 @@ def create_api(
             **session_row,
             "parent_session": parent_session,
             "subagents": subagents,
-            "turns": [without_cost(t, "cost") for t in turns_with_usage],
+            "turns": [reported_only(t, "cost", "cost_reported") for t in turns_with_usage],
             "tools": store.rows(
                 "SELECT * FROM tool_calls WHERE session_id=? ORDER BY ts LIMIT 1000",
                 (actual_session_id,),
@@ -276,7 +281,7 @@ def create_api(
         return {
             **rows[0],
             "calls": [
-                without_cost(call, "cost_reported", "cost_estimated")
+                without_estimates(call, "cost_estimated")
                 for call in store.rows(
                     "SELECT * FROM accounted_model_calls WHERE turn_id=? ORDER BY ts", (turn_id,)
                 )

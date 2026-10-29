@@ -659,14 +659,17 @@ def test_summaries_backfill_for_databases_created_before_them(tmp_path: Path):
     second.close()
 
 
-def test_pricing_is_off_by_default_and_hides_every_cost_figure(store: Store, tmp_path):
+def test_pricing_off_hides_estimates_but_keeps_agent_reported_costs(store: Store, tmp_path):
     assert Config(root=tmp_path).pricing_enabled is False
     seed(store)
-    store.db.execute("UPDATE model_calls SET cost_reported=1.5,cost_estimated=2.5")
-    store.db.execute("UPDATE session_summaries SET cost=1.5")
-    assert "unknown_price" not in {
-        r["detector"] for r in store.rows("SELECT detector FROM findings")
-    }
+    # The first call carries an agent-reported cost; the rest only have estimates.
+    first_call = store.rows("SELECT id FROM model_calls ORDER BY ts,id LIMIT 1")[0]["id"]
+    store.db.execute("UPDATE model_calls SET cost_reported=NULL,cost_estimated=2.5")
+    store.db.execute(
+        "UPDATE model_calls SET cost_reported=1.5,cost_estimated=9 WHERE id=?", (first_call,)
+    )
+    store.dirty_sessions.update(r["id"] for r in store.rows("SELECT id FROM sessions"))
+    store.flush()
     analyze(store)
     assert "unknown_price" not in {
         r["detector"] for r in store.rows("SELECT detector FROM findings")
@@ -676,23 +679,42 @@ def test_pricing_is_off_by_default_and_hides_every_cost_figure(store: Store, tmp
     )
     overview = client.get("/api/overview").json()
     assert overview["pricing_enabled"] is False
-    assert overview["cost_reported"] is None and overview["unpriced_calls"] is None
-    assert all(a["value"] is None for a in overview["agents"])
-    assert client.get("/api/sessions").json()[0]["cost"] is None
-    session = client.get("/api/sessions").json()[0]["id"]
-    detail = client.get(f"/api/sessions/{session}").json()
-    assert all(t["cost"] is None for t in detail["turns"])
+    assert overview["cost_reported"] == pytest.approx(1.5)
+    assert overview["cost_estimated"] is None and overview["unpriced_calls"] is None
+    assert [a["value"] for a in overview["agents"]] == [pytest.approx(1.5)]
+    row = client.get("/api/sessions").json()[0]
+    assert row["cost"] == pytest.approx(1.5)
+    detail = client.get(f"/api/sessions/{row['id']}").json()
+    assert detail["turns"][0]["cost"] == pytest.approx(1.5)
     turn = client.get(f"/api/turns/{detail['turns'][0]['id']}").json()
-    assert all(c["cost_reported"] is None and c["cost_estimated"] is None for c in turn["calls"])
+    assert all(c["cost_estimated"] is None for c in turn["calls"])
+    assert any(c["cost_reported"] == 1.5 for c in turn["calls"])
     body = report(store, Config(root=tmp_path), adapters(), utc(1), utc(8), enqueue=False)
-    assert "Cost by model" not in body["body"] and "value" not in body["body"].lower()
-    assert "cost_reported" not in body["usage"]
+    assert "Reported value: $1.5000" in body["body"]
+    assert "Estimated value" not in body["body"] and "Unpriced" not in body["body"]
+    assert "| Agent | Model | Reported value |" in body["body"]
+    assert "cost_estimated" not in body["usage"]
     enabled = TestClient(
         create_api(store, Config(root=tmp_path, pricing_enabled=True), adapters()),
         base_url="http://127.0.0.1:8742",
     )
-    assert enabled.get("/api/overview").json()["cost_reported"] == pytest.approx(7.5)
-    assert enabled.get("/api/sessions").json()[0]["cost"] == 1.5
+    assert enabled.get("/api/overview").json()["cost_estimated"] is not None
+    assert enabled.get("/api/sessions").json()[0]["cost"] > 1.5
+
+
+def test_summaries_gain_reported_cost_column_for_existing_databases(tmp_path: Path):
+    path = tmp_path / "old.sqlite3"
+    first = Store(path)
+    ingest_session(first, "old", datetime.now(UTC), 100)
+    first.db.execute("DROP TABLE session_summaries")
+    first.db.execute(
+        "CREATE TABLE session_summaries(id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_id TEXT NOT NULL, project_id TEXT, project TEXT, started_at TEXT, ended_at TEXT, resumed INTEGER NOT NULL DEFAULT 0, is_subagent INTEGER NOT NULL DEFAULT 0, subagent_role TEXT, parent_native_id TEXT, turns INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0, input_uncached INTEGER NOT NULL DEFAULT 0, input_cache_read INTEGER NOT NULL DEFAULT 0, input_cache_write INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, cost REAL, models TEXT, first_prompt TEXT, updated_at TEXT NOT NULL)"
+    )
+    first.close()
+    second = Store(path)
+    row = second.rows("SELECT tokens,cost_reported,models FROM session_summaries")[0]
+    assert (row["tokens"], row["cost_reported"], row["models"]) == (100, 0.1, "m1")
+    second.close()
 
 
 def test_pricing_config_must_be_boolean(tmp_path: Path):

@@ -233,17 +233,15 @@ function CallCard({ call, pricing }: { call: ModelCall; pricing: boolean }) {
             <dt>Total reported</dt>
             <dd>{count(call.total_reported)}</dd>
           </div>
+          <div>
+            <dt>Cost reported</dt>
+            <dd>{cost(call.cost_reported)}</dd>
+          </div>
           {pricing && (
-            <>
-              <div>
-                <dt>Cost reported</dt>
-                <dd>{cost(call.cost_reported)}</dd>
-              </div>
-              <div>
-                <dt>Cost estimated</dt>
-                <dd>{cost(call.cost_estimated)}</dd>
-              </div>
-            </>
+            <div>
+              <dt>Cost estimated</dt>
+              <dd>{cost(call.cost_estimated)}</dd>
+            </div>
           )}
         </dl>
         <div className="call-meta-footer">
@@ -504,32 +502,29 @@ export function PromptCard({
                     <dd>{count(sum(detail.calls.map((call) => call[field])))}</dd>
                   </div>
                 ))}
+                <div>
+                  <dt>Cost reported</dt>
+                  <dd>{cost(sum(detail.calls.map((call) => call.cost_reported)))}</dd>
+                </div>
                 {pricing && (
-                  <>
-                    <div>
-                      <dt>Cost reported</dt>
-                      <dd>{cost(sum(detail.calls.map((call) => call.cost_reported)))}</dd>
-                    </div>
-                    <div>
-                      <dt>Cost estimated</dt>
-                      <dd>
-                        {cost(
-                          sum(
-                            detail.calls
-                              .filter((call) => call.cost_reported == null)
-                              .map((call) => call.cost_estimated)
-                          )
-                        )}
-                      </dd>
-                    </div>
-                  </>
+                  <div>
+                    <dt>Cost estimated</dt>
+                    <dd>
+                      {cost(
+                        sum(
+                          detail.calls.filter((call) => call.cost_reported == null).map((call) => call.cost_estimated)
+                        )
+                      )}
+                    </dd>
+                  </div>
                 )}
               </dl>
 
               <p className="prompt-coverage">
                 Captured totals; missing fields are shown as —.{' '}
                 {pricing && unpriced > 0 && `${unpriced} ${unpriced === 1 ? 'call has' : 'calls have'} no known price. `}
-                {pricing && 'Values represent API-equivalent usage; subscription billing can differ.'}
+                {pricing ? 'Values represent API-equivalent usage; ' : 'Values are agent-reported; '}
+                subscription billing can differ.
               </p>
 
               <div className="prompt-section">

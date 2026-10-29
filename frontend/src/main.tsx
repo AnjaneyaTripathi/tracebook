@@ -702,15 +702,17 @@ function App() {
                       <p>Actions like reading files, writing code, terminal commands, or web lookups.</p>
                     </div>
                   </div>
-                  {pricing && (
-                    <div className="guide-item">
-                      <span className="guide-icon">💰</span>
-                      <div>
-                        <strong>Estimated Value</strong>
-                        <p>Equivalent raw API price benchmark (does not replace subscription billing).</p>
-                      </div>
+                  <div className="guide-item">
+                    <span className="guide-icon">💰</span>
+                    <div>
+                      <strong>{pricing ? 'Estimated Value' : 'Reported Value'}</strong>
+                      <p>
+                        {pricing
+                          ? 'Equivalent raw API price benchmark (does not replace subscription billing).'
+                          : 'Cost as reported by the agent itself (does not replace subscription billing).'}
+                      </p>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -727,19 +729,11 @@ function App() {
                   note={`${number(overview?.input_cache_read)} read from fast prompt cache`}
                   spark="◈"
                 />
-                {pricing ? (
-                  <Stat
-                    label="REPORTED API VALUE"
-                    value={money(overview?.cost_reported)}
-                    note={`${money(overview?.cost_estimated)} estimated separately`}
-                  />
-                ) : (
-                  <Stat
-                    label="MODEL CALLS"
-                    value={number(overview?.calls)}
-                    note={`${number(overview?.tools)} tool calls alongside them`}
-                  />
-                )}
+                <Stat
+                  label="REPORTED API VALUE"
+                  value={money(overview?.cost_reported)}
+                  note={pricing ? `${money(overview?.cost_estimated)} estimated separately` : 'As reported by agents'}
+                />
                 <Stat
                   label="SIGNALS TO REVIEW"
                   value={number(overview?.findings)}
@@ -891,7 +885,7 @@ function App() {
                   View all sessions →
                 </button>
               </div>
-              <SessionTable sessions={sessions.slice(0, 6)} open={openSession} showCost={pricing} />
+              <SessionTable sessions={sessions.slice(0, 6)} open={openSession} />
 
               {!!findings.length && (
                 <div className="signal-strip">
@@ -906,12 +900,12 @@ function App() {
                 </div>
               )}
 
-              {pricing && (
-                <p className="billing-note">
-                  Values are API-equivalent estimates or agent-reported figures. For subscription plans, they do not
-                  represent billed spend.
-                </p>
-              )}
+              <p className="billing-note">
+                {pricing
+                  ? 'Values are API-equivalent estimates or agent-reported figures.'
+                  : 'Values are agent-reported.'}{' '}
+                For subscription plans, they do not represent billed spend.
+              </p>
             </>
           )}
 
@@ -998,7 +992,6 @@ function App() {
                 open={openSession}
                 sort={sort}
                 order={order}
-                showCost={pricing}
                 onSort={(key) => {
                   if (key === sort) setOrder(order === 'desc' ? 'asc' : 'desc');
                   else {
@@ -1571,14 +1564,12 @@ function SessionTable({
   sort,
   order,
   onSort,
-  showCost = false,
 }: {
   sessions: Session[];
   open: (id: string) => Promise<void>;
   sort?: SortKey;
   order?: 'asc' | 'desc';
   onSort?: (key: SortKey) => void;
-  showCost?: boolean;
 }) {
   const header = { sort, order, onSort };
   return (
@@ -1591,7 +1582,7 @@ function SessionTable({
               <SortHeader label="Project" field="project" {...header} />
               <SortHeader label="Activity" field="turns" {...header} />
               <SortHeader label="Tokens" field="tokens" {...header} />
-              {showCost && <SortHeader label="Est. value" field="cost" {...header} />}
+              <SortHeader label="Value" field="cost" {...header} />
               <SortHeader label="Started" field="started" {...header} />
               <th>
                 <span className="sr-only">Open</span>
@@ -1637,7 +1628,7 @@ function SessionTable({
                   {number(s.turns)} prompts <span>·</span> {number(s.tools)} tools
                 </td>
                 <td className="numeric">{number(s.tokens)}</td>
-                {showCost && <td className="numeric">{money(s.cost)}</td>}
+                <td className="numeric">{money(s.cost)}</td>
                 <td className="timestamp">{date(s.started_at)}</td>
                 <td>
                   <button

@@ -59,11 +59,12 @@ can cause a retry. SMTP cannot provide universal exactly-once delivery.
 
 ## Pricing and interpretation
 
-Pricing is **off by default**. Tracebook then shows tokens, tools and findings
-only: no cost or value figures appear in the dashboard, API or reports, no
-estimates are computed, and `pricing.toml` is not created. Enable it explicitly
-with `pricing_enabled = true` in `config.toml` and restart the daemon. Agent-reported
-costs are hidden too while it is off; they are stored and reappear when enabled.
+Pricing is **off by default**. Costs that agents report themselves are always
+shown, labelled as agent-reported. With pricing off, Tracebook computes no
+estimates: estimated values, "unpriced" counts and the missing-rate finding do
+not appear, and `pricing.toml` is not created. Enable estimates explicitly with
+`pricing_enabled = true` in `config.toml` and restart the daemon. Stored
+estimates are kept and reappear when it is enabled.
 
 `pricing.toml` is intentionally empty initially: unknown model cost stays NULL.
 Enter verified USD-per-million rates under `[models.'provider/model']`, aliases,

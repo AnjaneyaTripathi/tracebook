@@ -8,8 +8,8 @@ redact_patterns = []
 metadata_env = []
 timezone = "UTC"
 report_hour = 23
-# Cost estimates and value figures are off by default. Set true and add rates to
-# pricing.toml to enable them.
+# Estimated costs are off by default (agent-reported costs always show). Set true
+# and add rates to pricing.toml to enable estimates.
 pricing_enabled = false
 
 [delivery.file]
