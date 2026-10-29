@@ -52,8 +52,8 @@ The process wrapper cannot observe model tokens and may miss short-lived childre
 UI session details cap turns/tools at 1,000; stored records remain accessible through
 SQL and the paginated event API. Retention controls and an optional LLM summarizer
 are not implemented. External SMTP/webhook acknowledgement failures can require an
-at-least-once retry; use receiver idempotency where supported. The repository must
-remain private; no public deployment, package publication or telemetry is configured.
+at-least-once retry; use receiver idempotency where supported. No hosted deployment,
+package publication or telemetry is configured by Tracebook.
 
 ## Live local installation
 
