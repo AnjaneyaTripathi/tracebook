@@ -7,6 +7,8 @@ Tracebook makes **no model calls and adds zero model tokens**. Runtime network
 listeners bind to `127.0.0.1`. No analytics, telemetry, remote fonts, pricing
 downloads or cloud sync.
 
+![Tracebook Dashboard](docs/images/dashboard-overview.png)
+
 ## Privacy and data handling
 
 - **Stored locally.** Tracebook keeps prompts, tool inputs and outputs, and model
