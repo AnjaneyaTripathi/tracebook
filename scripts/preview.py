@@ -19,7 +19,7 @@ from tracebook.store import Store
 
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="tracebook-preview-") as directory:
-        config = Config(root=Path(directory), port=18742)
+        config = Config(root=Path(directory), port=18742, pricing_enabled=True)
         store = Store(config.database)
         current = datetime.now(UTC)
         prompts = [

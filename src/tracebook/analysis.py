@@ -21,12 +21,12 @@ def _parse_ts(ts_str: object) -> float:
         return 0.0
 
 
-def analyze(store: Store) -> int:
+def analyze(store: Store, pricing: bool = False) -> int:
     with store.transaction():
-        return _analyze(store)
+        return _analyze(store, pricing)
 
 
-def _analyze(store: Store) -> int:
+def _analyze(store: Store, pricing: bool) -> int:
     count = 0
 
     def add(
@@ -135,7 +135,7 @@ def _analyze(store: Store) -> int:
     session_had_cache: dict[str, bool] = defaultdict(bool)
     session_last_cached: dict[str, Json] = {}
     for call in calls:
-        if call["cost_reported"] is None and call["cost_estimated"] is None:
+        if pricing and call["cost_reported"] is None and call["cost_estimated"] is None:
             model = str(call["model"] or "unknown")
             group_info = unknown.setdefault(model, {"ids": [], "count": 0})
             group_info["latest"] = call

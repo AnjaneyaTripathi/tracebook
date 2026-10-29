@@ -187,7 +187,14 @@ def test_report_model_breakdown_preserves_unknowns_and_cost_precedence(store, tm
             },
         )
     )
-    result = report(store, Config(root=tmp_path), adapters(), utc(1), utc(8), enqueue=False)
+    result = report(
+        store,
+        Config(root=tmp_path, pricing_enabled=True),
+        adapters(),
+        utc(1),
+        utc(8),
+        enqueue=False,
+    )
     models = {row["model"]: row for row in result["models"]}
     assert models["test-model"]["input_uncached"] == 220000
     assert models["test-model"]["output"] == 500
@@ -239,9 +246,9 @@ def test_rules_are_explainable_and_replay_stable(store: Store):
                     },
                 )
             )
-    first = analyze(store)
+    first = analyze(store, pricing=True)
     before = store.rows("SELECT * FROM findings ORDER BY id")
-    assert analyze(store) == first
+    assert analyze(store, pricing=True) == first
     assert before == store.rows("SELECT * FROM findings ORDER BY id")
     detected = {f["detector"] for f in before}
     assert {
@@ -264,6 +271,7 @@ def test_reports_window_idempotency_and_local_outbox(store: Store, tmp_path):
     analyze(store)
     config = Config(
         root=tmp_path / "state",
+        pricing_enabled=True,
         delivery={"file": {"enabled": True, "directory": str(tmp_path / "delivered")}},
     )
     first = report(store, config, adapters(), utc(1), utc(8))
@@ -649,3 +657,47 @@ def test_summaries_backfill_for_databases_created_before_them(tmp_path: Path):
     second = Store(path)
     assert second.rows("SELECT tokens FROM session_summaries")[0]["tokens"] == 70
     second.close()
+
+
+def test_pricing_is_off_by_default_and_hides_every_cost_figure(store: Store, tmp_path):
+    assert Config(root=tmp_path).pricing_enabled is False
+    seed(store)
+    store.db.execute("UPDATE model_calls SET cost_reported=1.5,cost_estimated=2.5")
+    store.db.execute("UPDATE session_summaries SET cost=1.5")
+    assert "unknown_price" not in {
+        r["detector"] for r in store.rows("SELECT detector FROM findings")
+    }
+    analyze(store)
+    assert "unknown_price" not in {
+        r["detector"] for r in store.rows("SELECT detector FROM findings")
+    }
+    client = TestClient(
+        create_api(store, Config(root=tmp_path), adapters()), base_url="http://127.0.0.1:8742"
+    )
+    overview = client.get("/api/overview").json()
+    assert overview["pricing_enabled"] is False
+    assert overview["cost_reported"] is None and overview["unpriced_calls"] is None
+    assert all(a["value"] is None for a in overview["agents"])
+    assert client.get("/api/sessions").json()[0]["cost"] is None
+    session = client.get("/api/sessions").json()[0]["id"]
+    detail = client.get(f"/api/sessions/{session}").json()
+    assert all(t["cost"] is None for t in detail["turns"])
+    turn = client.get(f"/api/turns/{detail['turns'][0]['id']}").json()
+    assert all(c["cost_reported"] is None and c["cost_estimated"] is None for c in turn["calls"])
+    body = report(store, Config(root=tmp_path), adapters(), utc(1), utc(8), enqueue=False)
+    assert "Cost by model" not in body["body"] and "value" not in body["body"].lower()
+    assert "cost_reported" not in body["usage"]
+    enabled = TestClient(
+        create_api(store, Config(root=tmp_path, pricing_enabled=True), adapters()),
+        base_url="http://127.0.0.1:8742",
+    )
+    assert enabled.get("/api/overview").json()["cost_reported"] == pytest.approx(7.5)
+    assert enabled.get("/api/sessions").json()[0]["cost"] == 1.5
+
+
+def test_pricing_config_must_be_boolean(tmp_path: Path):
+    (tmp_path / "config.toml").write_text('pricing_enabled = "yes"\n')
+    with pytest.raises(ValueError, match="pricing_enabled"):
+        Config.load(tmp_path)
+    (tmp_path / "config.toml").write_text("pricing_enabled = true\n")
+    assert Config.load(tmp_path).pricing_enabled is True

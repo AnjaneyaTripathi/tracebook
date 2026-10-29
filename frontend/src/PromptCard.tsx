@@ -207,7 +207,7 @@ export function ToolCard({
   );
 }
 
-function CallCard({ call }: { call: ModelCall }) {
+function CallCard({ call, pricing }: { call: ModelCall; pricing: boolean }) {
   const data = JSON.parse(call.data) as Record<string, unknown>;
   const totalTokens = (call.input_uncached || 0) + (call.input_cache_read || 0) + (call.output || 0);
 
@@ -233,14 +233,18 @@ function CallCard({ call }: { call: ModelCall }) {
             <dt>Total reported</dt>
             <dd>{count(call.total_reported)}</dd>
           </div>
-          <div>
-            <dt>Cost reported</dt>
-            <dd>{cost(call.cost_reported)}</dd>
-          </div>
-          <div>
-            <dt>Cost estimated</dt>
-            <dd>{cost(call.cost_estimated)}</dd>
-          </div>
+          {pricing && (
+            <>
+              <div>
+                <dt>Cost reported</dt>
+                <dd>{cost(call.cost_reported)}</dd>
+              </div>
+              <div>
+                <dt>Cost estimated</dt>
+                <dd>{cost(call.cost_estimated)}</dd>
+              </div>
+            </>
+          )}
         </dl>
         <div className="call-meta-footer">
           <small>Token confidence: {String(data.token_semantics_confidence || 'not supplied')}</small>
@@ -363,11 +367,13 @@ export function PromptCard({
   index,
   previousTurnModel,
   onOpenSubagent,
+  pricing = false,
 }: {
   turn: Turn;
   index: number;
   previousTurnModel?: string | null;
   onOpenSubagent?: (nativeIdOrId: string) => void;
+  pricing?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<TurnDetail | null>(null);
@@ -498,34 +504,38 @@ export function PromptCard({
                     <dd>{count(sum(detail.calls.map((call) => call[field])))}</dd>
                   </div>
                 ))}
-                <div>
-                  <dt>Cost reported</dt>
-                  <dd>{cost(sum(detail.calls.map((call) => call.cost_reported)))}</dd>
-                </div>
-                <div>
-                  <dt>Cost estimated</dt>
-                  <dd>
-                    {cost(
-                      sum(
-                        detail.calls
-                          .filter((call) => call.cost_reported == null)
-                          .map((call) => call.cost_estimated)
-                      )
-                    )}
-                  </dd>
-                </div>
+                {pricing && (
+                  <>
+                    <div>
+                      <dt>Cost reported</dt>
+                      <dd>{cost(sum(detail.calls.map((call) => call.cost_reported)))}</dd>
+                    </div>
+                    <div>
+                      <dt>Cost estimated</dt>
+                      <dd>
+                        {cost(
+                          sum(
+                            detail.calls
+                              .filter((call) => call.cost_reported == null)
+                              .map((call) => call.cost_estimated)
+                          )
+                        )}
+                      </dd>
+                    </div>
+                  </>
+                )}
               </dl>
 
               <p className="prompt-coverage">
                 Captured totals; missing fields are shown as —.{' '}
-                {unpriced > 0 && `${unpriced} ${unpriced === 1 ? 'call has' : 'calls have'} no known price. `}
-                Values represent API-equivalent usage; subscription billing can differ.
+                {pricing && unpriced > 0 && `${unpriced} ${unpriced === 1 ? 'call has' : 'calls have'} no known price. `}
+                {pricing && 'Values represent API-equivalent usage; subscription billing can differ.'}
               </p>
 
               <div className="prompt-section">
                 <h4>Model calls</h4>
                 {detail.calls.length ? (
-                  detail.calls.map((call) => <CallCard key={call.id} call={call} />)
+                  detail.calls.map((call) => <CallCard key={call.id} call={call} pricing={pricing} />)
                 ) : (
                   <p className="empty-subtle">No model usage was correlated with this prompt.</p>
                 )}

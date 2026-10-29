@@ -67,7 +67,7 @@ def init(ctx: typer.Context) -> None:
             config.root / "config.toml",
             'billing_mode = "mixed"\ntimezone = "UTC"\nreport_hour = 23\ncapture_content = true\n\n[delivery.file]\nenabled = true\n',
         )
-    if not (config.root / "pricing.toml").exists():
+    if config.pricing_enabled and not (config.root / "pricing.toml").exists():
         atomic_write(
             config.root / "pricing.toml",
             '# USD per million tokens. Add verified provider/model rates here.\nas_of = "'
@@ -189,8 +189,9 @@ def backfill(
                     typer.echo(f"{key}: skipped unreadable source ({type(exc).__name__})", err=True)
                 if index % 25 == 0 or index == len(sources):
                     typer.echo(f"{key}: {index}/{len(sources)} files, {total} events processed")
-        PriceBook(config.root / "pricing.toml").apply(store)
-        findings = analyze(store)
+        if config.pricing_enabled:
+            PriceBook(config.root / "pricing.toml").apply(store)
+        findings = analyze(store, pricing=config.pricing_enabled)
         typer.echo(f"Backfill complete: {total} events processed; {findings} findings.")
     finally:
         store.close()
@@ -215,12 +216,13 @@ def import_data(
 
 @app.command()
 def reanalyze(ctx: typer.Context) -> None:
-    """Recalculate local prices and rule findings from canonical evidence."""
+    """Recalculate rule findings (and prices, when pricing_enabled) from canonical evidence."""
     config = configuration(ctx)
     store = open_store(config)
     try:
-        PriceBook(config.root / "pricing.toml").apply(store)
-        typer.echo(f"Recomputed {analyze(store)} findings")
+        if config.pricing_enabled:
+            PriceBook(config.root / "pricing.toml").apply(store)
+        typer.echo(f"Recomputed {analyze(store, pricing=config.pricing_enabled)} findings")
     finally:
         store.close()
 

@@ -114,3 +114,22 @@ test('session table sorts, filters and hides sessions without usage', async ({ p
   await page.getByRole('combobox', { name: 'Model' }).selectOption('example-model');
   await expect(page.getByText('1–25 of 42')).toBeVisible();
 });
+
+test('cost figures disappear when pricing is not enabled', async ({ page }) => {
+  await page.route('**/api/overview*', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: { ...body, pricing_enabled: false, cost_reported: null, cost_estimated: null, unpriced_calls: null },
+    });
+  });
+  await page.goto('/');
+  await expect(page.locator('.stats')).not.toContainText('API VALUE');
+  await expect(page.locator('.billing-note')).toHaveCount(0);
+  await page.getByRole('button', { name: 'View all sessions' }).click();
+  await expect(page.getByRole('columnheader', { name: /Est\. value/ })).toHaveCount(0);
+  await page.locator('.session-button').first().click();
+  await page.getByRole('button', { name: 'Inspect prompt activity' }).first().click();
+  await expect(page.getByRole('region', { name: 'Prompt activity' })).not.toContainText('Cost reported');
+});

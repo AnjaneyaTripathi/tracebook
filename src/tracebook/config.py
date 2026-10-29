@@ -29,6 +29,7 @@ class Config:
     timezone: str = "UTC"
     delivery: dict[str, Any] = field(default_factory=dict)
     metadata_env: list[str] = field(default_factory=list)
+    pricing_enabled: bool = False
 
     @property
     def database(self) -> Path:
@@ -57,6 +58,7 @@ class Config:
                 "timezone",
                 "delivery",
                 "metadata_env",
+                "pricing_enabled",
             ):
                 if key in data:
                     setattr(result, key, data[key])
@@ -81,6 +83,8 @@ class Config:
         for pattern in result.redact_patterns:
             re.compile(pattern)
         ZoneInfo(result.timezone)
+        if type(result.pricing_enabled) is not bool:
+            raise ValueError("pricing_enabled must be true or false")
         if not isinstance(result.delivery, dict):
             raise ValueError("Delivery must be a table of configured channels")
         if not isinstance(result.metadata_env, list) or any(

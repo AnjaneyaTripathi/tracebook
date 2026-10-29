@@ -48,6 +48,11 @@ def create_api(
 ) -> FastAPI:
     app = FastAPI(title="Tracebook", docs_url=None, redoc_url=None)
     app.add_middleware(LocalOnlyMiddleware)
+    pricing_enabled = config.pricing_enabled
+
+    def without_cost(row: dict[str, Any], *keys: str) -> dict[str, Any]:
+        """Cost and value figures are only exposed when pricing is explicitly enabled."""
+        return row if pricing_enabled else {**row, **dict.fromkeys(keys)}
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -63,7 +68,11 @@ def create_api(
     async def overview(
         start: str = "", end: str = "9999", agent: str | None = None
     ) -> dict[str, Any]:
-        return {**store.overview(start, end, agent), "billing_mode": config.billing_mode}
+        usage = store.overview(start, end, agent)
+        if not pricing_enabled:
+            usage = without_cost(usage, "cost_reported", "cost_estimated", "unpriced_calls")
+            usage["agents"] = [without_cost(a, "value") for a in usage["agents"]]
+        return {**usage, "billing_mode": config.billing_mode, "pricing_enabled": pricing_enabled}
 
     @app.get("/api/adapters")
     async def adapter_list() -> list[dict[str, Any]]:
@@ -191,10 +200,13 @@ def create_api(
             f"SELECT COUNT(*) n FROM session_summaries s WHERE {where}", tuple(params)
         )
         response.headers["X-Total-Count"] = str(total[0]["n"])
-        return store.rows(
-            f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
-            (*params, limit, offset),
-        )
+        return [
+            without_cost(row, "cost")
+            for row in store.rows(
+                f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            )
+        ]
 
     @app.get("/api/sessions/{session_id}")
     async def session_detail(session_id: str) -> dict[str, Any]:
@@ -246,7 +258,7 @@ def create_api(
             **session_row,
             "parent_session": parent_session,
             "subagents": subagents,
-            "turns": turns_with_usage,
+            "turns": [without_cost(t, "cost") for t in turns_with_usage],
             "tools": store.rows(
                 "SELECT * FROM tool_calls WHERE session_id=? ORDER BY ts LIMIT 1000",
                 (actual_session_id,),
@@ -263,9 +275,12 @@ def create_api(
             raise HTTPException(404, "Turn not found")
         return {
             **rows[0],
-            "calls": store.rows(
-                "SELECT * FROM accounted_model_calls WHERE turn_id=? ORDER BY ts", (turn_id,)
-            ),
+            "calls": [
+                without_cost(call, "cost_reported", "cost_estimated")
+                for call in store.rows(
+                    "SELECT * FROM accounted_model_calls WHERE turn_id=? ORDER BY ts", (turn_id,)
+                )
+            ],
             "tools": store.rows("SELECT * FROM tool_calls WHERE turn_id=? ORDER BY ts", (turn_id,)),
         }
 

@@ -527,6 +527,7 @@ function App() {
         (overview.reasoning || 0)
       : null;
 
+  const pricing = overview?.pricing_enabled ?? false;
   const chartData = [...(overview?.daily || [])].reverse();
 
   const shownFindings = useMemo(() => {
@@ -701,13 +702,15 @@ function App() {
                       <p>Actions like reading files, writing code, terminal commands, or web lookups.</p>
                     </div>
                   </div>
-                  <div className="guide-item">
-                    <span className="guide-icon">💰</span>
-                    <div>
-                      <strong>Estimated Value</strong>
-                      <p>Equivalent raw API price benchmark (does not replace subscription billing).</p>
+                  {pricing && (
+                    <div className="guide-item">
+                      <span className="guide-icon">💰</span>
+                      <div>
+                        <strong>Estimated Value</strong>
+                        <p>Equivalent raw API price benchmark (does not replace subscription billing).</p>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
@@ -724,15 +727,27 @@ function App() {
                   note={`${number(overview?.input_cache_read)} read from fast prompt cache`}
                   spark="◈"
                 />
-                <Stat
-                  label="REPORTED API VALUE"
-                  value={money(overview?.cost_reported)}
-                  note={`${money(overview?.cost_estimated)} estimated separately`}
-                />
+                {pricing ? (
+                  <Stat
+                    label="REPORTED API VALUE"
+                    value={money(overview?.cost_reported)}
+                    note={`${money(overview?.cost_estimated)} estimated separately`}
+                  />
+                ) : (
+                  <Stat
+                    label="MODEL CALLS"
+                    value={number(overview?.calls)}
+                    note={`${number(overview?.tools)} tool calls alongside them`}
+                  />
+                )}
                 <Stat
                   label="SIGNALS TO REVIEW"
                   value={number(overview?.findings)}
-                  note={`${number(overview?.unpriced_calls || 0)} model calls without a price`}
+                  note={
+                    pricing
+                      ? `${number(overview?.unpriced_calls || 0)} model calls without a price`
+                      : 'Rule-based, no model calls'
+                  }
                   accent
                 />
               </div>
@@ -876,7 +891,7 @@ function App() {
                   View all sessions →
                 </button>
               </div>
-              <SessionTable sessions={sessions.slice(0, 6)} open={openSession} />
+              <SessionTable sessions={sessions.slice(0, 6)} open={openSession} showCost={pricing} />
 
               {!!findings.length && (
                 <div className="signal-strip">
@@ -891,10 +906,12 @@ function App() {
                 </div>
               )}
 
-              <p className="billing-note">
-                Values are API-equivalent estimates or agent-reported figures. For subscription plans, they do not
-                represent billed spend.
-              </p>
+              {pricing && (
+                <p className="billing-note">
+                  Values are API-equivalent estimates or agent-reported figures. For subscription plans, they do not
+                  represent billed spend.
+                </p>
+              )}
             </>
           )}
 
@@ -981,6 +998,7 @@ function App() {
                 open={openSession}
                 sort={sort}
                 order={order}
+                showCost={pricing}
                 onSort={(key) => {
                   if (key === sort) setOrder(order === 'desc' ? 'asc' : 'desc');
                   else {
@@ -1339,6 +1357,7 @@ function App() {
                     index={i}
                     previousTurnModel={i > 0 ? selected.turns[i - 1].models : null}
                     onOpenSubagent={openSession}
+                    pricing={pricing}
                   />
                 ))}
               {detailTab === 'Tools' &&
@@ -1552,12 +1571,14 @@ function SessionTable({
   sort,
   order,
   onSort,
+  showCost = false,
 }: {
   sessions: Session[];
   open: (id: string) => Promise<void>;
   sort?: SortKey;
   order?: 'asc' | 'desc';
   onSort?: (key: SortKey) => void;
+  showCost?: boolean;
 }) {
   const header = { sort, order, onSort };
   return (
@@ -1570,7 +1591,7 @@ function SessionTable({
               <SortHeader label="Project" field="project" {...header} />
               <SortHeader label="Activity" field="turns" {...header} />
               <SortHeader label="Tokens" field="tokens" {...header} />
-              <SortHeader label="Est. value" field="cost" {...header} />
+              {showCost && <SortHeader label="Est. value" field="cost" {...header} />}
               <SortHeader label="Started" field="started" {...header} />
               <th>
                 <span className="sr-only">Open</span>
@@ -1616,7 +1637,7 @@ function SessionTable({
                   {number(s.turns)} prompts <span>·</span> {number(s.tools)} tools
                 </td>
                 <td className="numeric">{number(s.tokens)}</td>
-                <td className="numeric">{money(s.cost)}</td>
+                {showCost && <td className="numeric">{money(s.cost)}</td>}
                 <td className="timestamp">{date(s.started_at)}</td>
                 <td>
                   <button

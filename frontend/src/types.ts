@@ -3,7 +3,7 @@ export interface Overview {
   input_uncached: number | null; input_cache_read: number | null; input_cache_write: number | null;
   output: number | null; reasoning: number | null; cost_reported: number | null;
   cost_estimated: number | null; unpriced_calls: number | null; parse_warnings: number;
-  billing_mode: string;
+  billing_mode: string; pricing_enabled: boolean;
   agents: { agent: string; calls: number; tokens: number; value: number | null }[];
   daily: { day: string; calls: number; tokens: number }[];
 }

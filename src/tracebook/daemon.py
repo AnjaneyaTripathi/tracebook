@@ -77,16 +77,17 @@ async def _serve(config: Config) -> None:
                 if time.monotonic() - last_analysis > 60:
                     if dirty:
                         # Older calls keep their stored estimates unless the price file changed.
-                        stat = pricing_path.stat() if pricing_path.exists() else None
-                        signature = (stat.st_mtime_ns, stat.st_size) if stat else None
-                        PriceBook(pricing_path).apply(
-                            store,
-                            None
-                            if not priced or signature != pricing_seen
-                            else config.recent_cutoff(),
-                        )
-                        pricing_seen, priced = signature, True
-                        analyze(store)
+                        if config.pricing_enabled:
+                            stat = pricing_path.stat() if pricing_path.exists() else None
+                            signature = (stat.st_mtime_ns, stat.st_size) if stat else None
+                            PriceBook(pricing_path).apply(
+                                store,
+                                None
+                                if not priced or signature != pricing_seen
+                                else config.recent_cutoff(),
+                            )
+                            pricing_seen, priced = signature, True
+                        analyze(store, pricing=config.pricing_enabled)
                         dirty = False
                         last_revision = store.revision
                     report_due(store, config, registry)
