@@ -13,7 +13,14 @@ export interface Adapter {
 export interface Session {
   id: string; agent: string; native_id: string; project: string | null; started_at: string | null;
   turns: number; tools: number; tokens: number | null; first_prompt: string | null; resumed: number;
-  models?: string | null; data?: string;
+  models?: string | null; data?: string; cost?: number | null; detail?: boolean;
+  is_subagent?: number; subagent_role?: string | null; calls?: number;
+}
+export interface SessionFacets {
+  agents: { agent: string; sessions: number }[];
+  projects: { id: string; root: string | null; sessions: number }[];
+  models: { model: string; sessions: number }[];
+  empty_sessions: number; detail_days: number;
 }
 export interface Turn {
   id: string; prompt: string | null; started_at: string | null; ended_at: string | null; status: string; kind: string;
@@ -42,7 +49,7 @@ export interface SubagentSummary {
 export interface SessionDetail {
   id: string; agent: string; native_id: string; turns: Turn[]; tools: Tool[]; findings: Finding[];
   data?: string; parent_session?: { id: string; agent: string; native_id: string; started_at: string } | null;
-  subagents?: SubagentSummary[];
+  subagents?: SubagentSummary[]; detail?: boolean; summary?: Session;
 }
 export interface CanonicalEvent {
   id: string; kind: string; ts: string; data: Record<string, unknown>;

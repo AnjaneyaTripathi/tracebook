@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -514,7 +514,8 @@ def test_api_filters_details_and_origin_protection(store: Store, tmp_path):
     seed(store)
     analyze(store)
     client = TestClient(
-        create_api(store, Config(root=tmp_path), adapters()), base_url="http://127.0.0.1:8742"
+        create_api(store, Config(root=tmp_path, detail_days=0), adapters()),
+        base_url="http://127.0.0.1:8742",
     )
     assert client.get("/api/health").json()["ok"]
     assert client.get("/api/health", headers={"Host": "attacker.example"}).status_code == 403
@@ -549,3 +550,109 @@ def test_api_filters_details_and_origin_protection(store: Store, tmp_path):
     assert client.get(f"/api/reports/{rid}").json()["body"]
     assert client.post("/api/reports", json={"start": utc(10), "end": utc(1)}).status_code == 400
     assert client.get("/").status_code in {200, 503}
+
+
+def ingest_session(store: Store, name: str, day: datetime, tokens: int, model: str = "m1") -> None:
+    start = day.isoformat()
+    with store.transaction():
+        store.ingest(Event("codex", name, "session", start, "s", data={"cwd": f"/work/{name}"}))
+        store.ingest(
+            Event("codex", name, "turn_start", start, "t", "t", data={"prompt": f"Task {name}"})
+        )
+        store.ingest(
+            Event(
+                "codex",
+                name,
+                "model_call",
+                start,
+                "c",
+                "t",
+                data={"model": model, "input_uncached": tokens, "cost_reported": tokens / 1000},
+            )
+        )
+
+
+def test_summaries_hide_empty_sessions_and_serve_sorted_filtered_pages(store: Store, tmp_path):
+    today = datetime.now(UTC)
+    ingest_session(store, "big", today, 5000, "m2")
+    ingest_session(store, "small", today.replace(microsecond=0), 40)
+    ingest_session(store, "empty", today, 0)
+    with store.transaction():
+        store.ingest(Event("codex", "idle", "session", today.isoformat(), "s", data={}))
+    client = TestClient(
+        create_api(store, Config(root=tmp_path), adapters()), base_url="http://127.0.0.1:8742"
+    )
+    rows = client.get("/api/sessions?sort=tokens&order=desc")
+    assert [r["first_prompt"] for r in rows.json()] == ["Task big", "Task small"]
+    assert rows.headers["X-Total-Count"] == "2"
+    assert client.get("/api/sessions?sort=tokens&order=asc").json()[0]["tokens"] == 40
+    assert len(client.get("/api/sessions?include_empty=true").json()) == 4
+    assert [r["models"] for r in client.get("/api/sessions?model=m2").json()] == ["m2"]
+    assert len(client.get("/api/sessions?min_tokens=1000").json()) == 1
+    assert len(client.get("/api/sessions?q=small").json()) == 1
+    assert client.get("/api/sessions?q=%25").json() == []
+    page = client.get("/api/sessions?limit=1&offset=1&sort=tokens")
+    assert len(page.json()) == 1 and page.headers["X-Total-Count"] == "2"
+    assert client.get("/api/sessions?sort=data").status_code == 400
+    assert client.get("/api/overview").json()["sessions"] == 2
+    facets = client.get("/api/sessions/facets").json()
+    assert facets["empty_sessions"] == 2
+    assert {m["model"] for m in facets["models"]} == {"m1", "m2"}
+    assert sum(p["sessions"] for p in client.get("/api/projects").json()) == 2
+
+
+def test_summary_follows_later_events_and_repricing(store: Store, tmp_path):
+    ingest_session(store, "live", datetime.now(UTC), 100)
+    with store.transaction():
+        store.ingest(
+            Event(
+                "codex",
+                "live",
+                "model_call",
+                datetime.now(UTC).isoformat(),
+                "c2",
+                "t",
+                data={"model": "m1", "output": 50},
+            )
+        )
+    row = store.rows("SELECT * FROM session_summaries")[0]
+    assert (row["calls"], row["tokens"], row["turns"]) == (2, 150, 1)
+    # A write outside any transaction is rolled up lazily by flush().
+    store.ingest(Event("codex", "live", "tool_call", utc(5), "tool", "t", data={"tool": "shell"}))
+    store.flush()
+    assert store.rows("SELECT tools FROM session_summaries")[0]["tools"] == 1
+
+
+def test_sessions_past_detail_window_serve_summary_only(store: Store, tmp_path):
+    old = datetime.now(UTC) - timedelta(days=90)
+    ingest_session(store, "old", old, 900)
+    ingest_session(store, "new", datetime.now(UTC), 100)
+    client = TestClient(
+        create_api(store, Config(root=tmp_path, detail_days=30), adapters()),
+        base_url="http://127.0.0.1:8742",
+    )
+    listed = {r["first_prompt"]: r for r in client.get("/api/sessions").json()}
+    assert listed["Task old"]["detail"] is False and listed["Task new"]["detail"] is True
+    archived = client.get(f"/api/sessions/{listed['Task old']['id']}").json()
+    assert archived["detail"] is False and archived["turns"] == []
+    assert archived["summary"]["tokens"] == 900
+    current = client.get(f"/api/sessions/{listed['Task new']['id']}").json()
+    assert current["detail"] is True and len(current["turns"]) == 1
+    # Prompt text search skips archived sessions' raw rows but still matches their summary.
+    assert len(client.get("/api/sessions?q=Task").json()) == 2
+    everything = TestClient(
+        create_api(store, Config(root=tmp_path, detail_days=0), adapters()),
+        base_url="http://127.0.0.1:8742",
+    )
+    assert everything.get(f"/api/sessions/{listed['Task old']['id']}").json()["detail"] is True
+
+
+def test_summaries_backfill_for_databases_created_before_them(tmp_path: Path):
+    path = tmp_path / "legacy.sqlite3"
+    first = Store(path)
+    ingest_session(first, "legacy", datetime.now(UTC), 70)
+    first.db.execute("DELETE FROM session_summaries")
+    first.close()
+    second = Store(path)
+    assert second.rows("SELECT tokens FROM session_summaries")[0]["tokens"] == 70
+    second.close()

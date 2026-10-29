@@ -8,6 +8,8 @@ redact_patterns = []
 metadata_env = []
 timezone = "UTC"
 report_hour = 23
+# Sessions older than this many days open as a summary; 0 keeps full detail.
+detail_days = 30
 
 [delivery.file]
 enabled = true

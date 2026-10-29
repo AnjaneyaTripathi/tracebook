@@ -9,7 +9,7 @@ import math
 import sqlite3
 import subprocess
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS adapter_state(id TEXT PRIMARY KEY, path TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS findings(id TEXT PRIMARY KEY, detector TEXT NOT NULL, severity TEXT NOT NULL, agent TEXT, session_id TEXT, turn_id TEXT, ts TEXT NOT NULL, title TEXT NOT NULL, evidence TEXT NOT NULL, recommendation TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY, window_start TEXT NOT NULL, window_end TEXT NOT NULL, created_at TEXT NOT NULL, body TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY, report_id TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt TEXT NOT NULL, last_error TEXT);
+CREATE TABLE IF NOT EXISTS session_summaries(id TEXT PRIMARY KEY, agent TEXT NOT NULL, native_id TEXT NOT NULL, project_id TEXT, project TEXT, started_at TEXT, ended_at TEXT, resumed INTEGER NOT NULL DEFAULT 0, is_subagent INTEGER NOT NULL DEFAULT 0, subagent_role TEXT, parent_native_id TEXT, turns INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0, input_uncached INTEGER NOT NULL DEFAULT 0, input_cache_read INTEGER NOT NULL DEFAULT 0, input_cache_write INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, reasoning INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, cost REAL, models TEXT, first_prompt TEXT, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_summaries_started ON session_summaries(started_at);
+CREATE INDEX IF NOT EXISTS idx_summaries_agent ON session_summaries(agent,started_at);
+CREATE INDEX IF NOT EXISTS idx_summaries_project ON session_summaries(project_id,started_at);
+CREATE INDEX IF NOT EXISTS idx_summaries_tokens ON session_summaries(tokens);
+CREATE INDEX IF NOT EXISTS idx_summaries_parent ON session_summaries(parent_native_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent,started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id,started_at);
@@ -65,6 +71,17 @@ CREATE VIEW IF NOT EXISTS accounted_model_calls AS SELECT m.* FROM model_calls m
  WHERE COALESCE(m.usage_format,'') != 'uncorrelated_telemetry' AND (COALESCE(m.usage_format,'') != 'legacy_delta' OR NOT EXISTS
  (SELECT 1 FROM model_calls n WHERE n.session_id=m.session_id AND n.turn_id IS m.turn_id AND n.usage_format='response'));
 """
+TOKEN_SUM = "COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)"
+SUMMARY_SQL = f"""INSERT OR REPLACE INTO session_summaries
+SELECT s.id,s.agent,s.native_id,s.project_id,p.root,s.started_at,s.ended_at,s.resumed,
+ COALESCE(json_extract(s.data,'$.is_subagent'),0),json_extract(s.data,'$.subagent_role'),json_extract(s.data,'$.parent_native_id'),
+ (SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id AND t.kind='prompt'),
+ (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id),
+ COALESCE(u.calls,0),COALESCE(u.input_uncached,0),COALESCE(u.input_cache_read,0),COALESCE(u.input_cache_write,0),COALESCE(u.output,0),COALESCE(u.reasoning,0),COALESCE(u.tokens,0),u.cost,u.models,
+ (SELECT substr(prompt,1,200) FROM turns t WHERE t.session_id=s.id AND t.prompt IS NOT NULL ORDER BY started_at LIMIT 1),?
+FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
+LEFT JOIN (SELECT session_id,COUNT(*) calls,COALESCE(SUM(input_uncached),0) input_uncached,COALESCE(SUM(input_cache_read),0) input_cache_read,COALESCE(SUM(input_cache_write),0) input_cache_write,COALESCE(SUM(output),0) output,COALESCE(SUM(reasoning),0) reasoning,SUM({TOKEN_SUM}) tokens,SUM(COALESCE(cost_reported,cost_estimated)) cost,GROUP_CONCAT(DISTINCT model) models FROM accounted_model_calls WHERE session_id IN ({{ids}}) GROUP BY session_id) u ON u.session_id=s.id
+WHERE s.id IN ({{ids}})"""
 RANK = {"process": 1, "import": 1, "hook": 2, "transcript": 3, "otel": 4}
 
 
@@ -110,6 +127,7 @@ class Store:
         self._writer_lock = threading.RLock()
         self._agents_seen: dict[str, object] = {}
         self._sessions_seen: dict[str, str] = {}
+        self.dirty_sessions: set[str] = set()
         path.chmod(0o600)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -122,6 +140,14 @@ class Store:
         self.db.executescript(SCHEMA)
         self.db.execute("INSERT OR IGNORE INTO migrations VALUES(1,?)", (now(),))
         self.db.execute("PRAGMA user_version=1")
+        # Databases created before summaries existed: roll up whatever is missing once.
+        self.dirty_sessions.update(
+            r[0]
+            for r in self.db.execute(
+                "SELECT id FROM sessions WHERE id NOT IN (SELECT id FROM session_summaries)"
+            )
+        )
+        self.flush()
 
     def close(self) -> None:
         self.db.close()
@@ -136,9 +162,34 @@ class Store:
                 self.db.rollback()
                 self._agents_seen.clear()
                 self._sessions_seen.clear()
+                self.dirty_sessions.clear()
                 raise
             else:
-                self.db.commit()
+                try:
+                    self.refresh_summaries()
+                    self.db.commit()
+                except BaseException:
+                    self.db.rollback()
+                    self.dirty_sessions.clear()
+                    raise
+
+    def flush(self) -> None:
+        """Roll up sessions touched outside a transaction so readers see current summaries."""
+        if self.dirty_sessions:
+            with self.transaction():
+                pass
+
+    def refresh_summaries(self, ids: Iterable[str] | None = None, chunk: int = 400) -> int:
+        """Recompute rollup rows for touched sessions inside the caller's transaction."""
+        pending = sorted(self.dirty_sessions.copy() if ids is None else set(ids))
+        stamp = now()
+        for start in range(0, len(pending), chunk):
+            part = pending[start : start + chunk]
+            marks = ",".join("?" * len(part))
+            self.db.execute(SUMMARY_SQL.format(ids=marks), (stamp, *part, *part))
+        if ids is None:
+            self.dirty_sessions.difference_update(pending)
+        return len(pending)
 
     @contextmanager
     def reader(self) -> Iterator[sqlite3.Connection]:
@@ -204,6 +255,7 @@ class Store:
             event.data["status"] = "unknown"
         event.data = self.redactor.clean(event.data)
         sid = digest(event.agent, event.session_id)
+        self.dirty_sessions.add(sid)
         tid = digest(event.agent, event.session_id, event.turn_id) if event.turn_id else None
         if event.turn_id:
             linked = self.db.execute(
@@ -473,7 +525,7 @@ class Store:
         )[0]
         counts: Json = {}
         for name, table, time_column, condition in (
-            ("sessions", "sessions", "started_at", "1=1"),
+            ("sessions", "session_summaries", "started_at", "tokens>0"),
             ("turns", "turns", "started_at", "kind='prompt'"),
             ("tools", "tool_calls", "ts", "1=1"),
             ("parse_warnings", "events", "ts", "kind='warning'"),

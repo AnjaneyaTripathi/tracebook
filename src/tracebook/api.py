@@ -79,18 +79,31 @@ def create_api(
 
     @app.get("/api/projects")
     async def projects() -> list[dict[str, Any]]:
+        store.flush()
         return store.rows(
-            "SELECT p.*,COUNT(s.id) sessions FROM projects p LEFT JOIN sessions s ON s.project_id=p.id GROUP BY p.id ORDER BY sessions DESC"
+            "SELECT p.*,COUNT(s.id) sessions FROM projects p LEFT JOIN session_summaries s ON s.project_id=p.id AND s.tokens>0 GROUP BY p.id ORDER BY sessions DESC"
         )
 
-    @app.get("/api/sessions")
-    async def sessions(
-        agent: str | None = None,
-        project: str | None = None,
-        q: str = "",
-        limit: int = Query(50, ge=1, le=200),
-        offset: int = Query(0, ge=0),
-    ) -> list[dict[str, Any]]:
+    sort_columns = {
+        "started": "s.started_at",
+        "agent": "s.agent",
+        "project": "s.project",
+        "turns": "s.turns",
+        "tools": "s.tools",
+        "tokens": "s.tokens",
+        "cost": "s.cost",
+    }
+
+    def session_filters(
+        agent: str | None,
+        project: str | None,
+        model: str | None,
+        q: str,
+        since: str,
+        until: str,
+        min_tokens: int,
+        include_empty: bool,
+    ) -> tuple[str, list[object]]:
         filters = ["1=1"]
         params: list[object] = []
         if agent:
@@ -99,21 +112,103 @@ def create_api(
         if project:
             filters.append("s.project_id=?")
             params.append(project)
+        if model:
+            filters.append("(',' || s.models || ',') LIKE ?")
+            params.append(f"%,{model},%")
+        if since:
+            filters.append("s.started_at>=?")
+            params.append(since)
+        if until:
+            filters.append("s.started_at<?")
+            params.append(until)
+        if not include_empty:
+            filters.append("s.tokens>0")
+        if min_tokens:
+            filters.append("s.tokens>=?")
+            params.append(min_tokens)
         if q:
-            filters.append(
-                "EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.prompt LIKE ?)"
+            like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            clauses = [
+                f"{column} LIKE ? ESCAPE '\\'"
+                for column in ("s.first_prompt", "s.project", "s.models", "s.native_id")
+            ]
+            params += [like] * len(clauses)
+            # Full prompt search only walks sessions that still have detail rows.
+            cutoff = config.detail_cutoff
+            clauses.append(
+                ("(s.started_at>=? AND " if cutoff else "(")
+                + "EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.prompt LIKE ? ESCAPE '\\'))"
             )
-            params.append("%" + q + "%")
-        params += [limit, offset]
-        return store.rows(
-            "SELECT s.*,p.root project,(SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id AND t.kind='prompt') turns,(SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id) tools,(SELECT SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) FROM accounted_model_calls m WHERE m.session_id=s.id) tokens,(SELECT prompt FROM turns t WHERE t.session_id=s.id AND t.prompt IS NOT NULL ORDER BY started_at LIMIT 1) first_prompt,(SELECT GROUP_CONCAT(DISTINCT model) FROM accounted_model_calls m WHERE m.session_id=s.id AND m.model IS NOT NULL) models FROM sessions s LEFT JOIN projects p ON p.id=s.project_id WHERE "
-            + " AND ".join(filters)
-            + " ORDER BY s.started_at DESC LIMIT ? OFFSET ?",
-            tuple(params),
+            if cutoff:
+                params.append(cutoff)
+            params.append(like)
+            filters.append("(" + " OR ".join(clauses) + ")")
+        return " AND ".join(filters), params
+
+    @app.get("/api/sessions/facets")
+    async def session_facets() -> dict[str, Any]:
+        store.flush()
+        models: dict[str, int] = {}
+        for row in store.rows(
+            "SELECT models,COUNT(*) n FROM session_summaries WHERE tokens>0 AND models IS NOT NULL GROUP BY models"
+        ):
+            for name in str(row["models"]).split(","):
+                models[name] = models.get(name, 0) + int(row["n"])
+        return {
+            "agents": store.rows(
+                "SELECT agent,COUNT(*) sessions FROM session_summaries WHERE tokens>0 GROUP BY agent ORDER BY sessions DESC"
+            ),
+            "projects": store.rows(
+                "SELECT project_id id,project root,COUNT(*) sessions FROM session_summaries WHERE tokens>0 AND project_id IS NOT NULL GROUP BY project_id ORDER BY sessions DESC LIMIT 200"
+            ),
+            "models": [
+                {"model": name, "sessions": count}
+                for name, count in sorted(models.items(), key=lambda item: -item[1])
+            ],
+            "empty_sessions": store.rows("SELECT COUNT(*) n FROM session_summaries WHERE tokens=0")[
+                0
+            ]["n"],
+            "detail_days": config.detail_days,
+        }
+
+    @app.get("/api/sessions")
+    async def sessions(
+        response: Response,
+        agent: str | None = None,
+        project: str | None = None,
+        model: str | None = None,
+        q: str = "",
+        since: str = "",
+        until: str = "",
+        min_tokens: int = Query(0, ge=0),
+        include_empty: bool = False,
+        sort: str = "started",
+        order: str = "desc",
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ) -> list[dict[str, Any]]:
+        if sort not in sort_columns or order not in {"asc", "desc"}:
+            raise HTTPException(400, "Unsupported sort")
+        store.flush()
+        where, params = session_filters(
+            agent, project, model, q, since, until, min_tokens, include_empty
         )
+        total = store.rows(
+            f"SELECT COUNT(*) n FROM session_summaries s WHERE {where}", tuple(params)
+        )
+        response.headers["X-Total-Count"] = str(total[0]["n"])
+        cutoff = config.detail_cutoff
+        return [
+            {**row, "detail": cutoff is None or str(row["started_at"] or "") >= cutoff}
+            for row in store.rows(
+                f"SELECT s.* FROM session_summaries s WHERE {where} ORDER BY {sort_columns[sort]} {order.upper()}, s.id LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            )
+        ]
 
     @app.get("/api/sessions/{session_id}")
     async def session_detail(session_id: str) -> dict[str, Any]:
+        store.flush()
         rows = store.rows(
             "SELECT * FROM sessions WHERE id=? OR native_id=?", (session_id, session_id)
         )
@@ -135,13 +230,26 @@ def create_api(
                 parent_session = p_rows[0]
 
         subagents = store.rows(
-            "SELECT s.id, s.agent, s.native_id, s.started_at, s.data, "
-            "(SELECT COUNT(*) FROM turns t WHERE t.session_id=s.id) turns, "
-            "(SELECT COUNT(*) FROM tool_calls c WHERE c.session_id=s.id) tools, "
-            "(SELECT SUM(COALESCE(input_uncached,0)+COALESCE(input_cache_read,0)+COALESCE(input_cache_write,0)+COALESCE(output,0)+COALESCE(reasoning,0)) FROM accounted_model_calls m WHERE m.session_id=s.id) tokens "
-            "FROM sessions s WHERE json_extract(data, '$.parent_native_id') = ?",
+            "SELECT m.id, m.agent, m.native_id, m.started_at, s.data, m.turns, m.tools, m.tokens "
+            "FROM session_summaries m JOIN sessions s ON s.id=m.id WHERE m.parent_native_id = ?",
             (session_row["native_id"],),
         )
+        summary = store.rows("SELECT * FROM session_summaries WHERE id=?", (actual_session_id,))[0]
+        cutoff = config.detail_cutoff
+        if cutoff and str(session_row["started_at"] or "") < cutoff:
+            # Past the detail window: only the rollup is served; raw rows are not scanned.
+            return {
+                **session_row,
+                "detail": False,
+                "summary": summary,
+                "parent_session": parent_session,
+                "subagents": subagents,
+                "turns": [],
+                "tools": [],
+                "findings": store.rows(
+                    "SELECT * FROM findings WHERE session_id=? ORDER BY ts", (actual_session_id,)
+                ),
+            }
 
         turns_with_usage = store.rows(
             "SELECT t.*, "
@@ -163,6 +271,8 @@ def create_api(
 
         return {
             **session_row,
+            "detail": True,
+            "summary": summary,
             "parent_session": parent_session,
             "subagents": subagents,
             "turns": turns_with_usage,

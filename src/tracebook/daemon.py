@@ -66,13 +66,26 @@ async def _serve(config: Config) -> None:
         last_analysis = float("-inf")
         dirty = True
         last_revision = -1
+        pricing_seen: tuple[int, int] | None = None
+        priced = False
+        pricing_path = config.root / "pricing.toml"
         while not stop.is_set():
             try:
                 changed = await capture.poll_async(spool, config.scan_seconds)
+                store.flush()
                 dirty = dirty or bool(changed) or store.revision != last_revision
                 if time.monotonic() - last_analysis > 60:
                     if dirty:
-                        PriceBook(config.root / "pricing.toml").apply(store)
+                        # Older sessions keep their stored estimates unless the price file changed.
+                        stat = pricing_path.stat() if pricing_path.exists() else None
+                        signature = (stat.st_mtime_ns, stat.st_size) if stat else None
+                        PriceBook(pricing_path).apply(
+                            store,
+                            None
+                            if not priced or signature != pricing_seen
+                            else config.detail_cutoff,
+                        )
+                        pricing_seen, priced = signature, True
                         analyze(store)
                         dirty = False
                         last_revision = store.revision

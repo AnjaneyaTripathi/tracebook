@@ -128,6 +128,17 @@ def main() -> None:
                                 data={"status": "error" if day == 1 else "completed"},
                             )
                         )
+            # A session with no recorded usage must stay out of the default session list.
+            store.ingest(
+                Event(
+                    "codex",
+                    "example-idle",
+                    "session",
+                    utc(current.isoformat()),
+                    "example-idle",
+                    data={"cwd": "/example/storefront"},
+                )
+            )
         analyze(store)
         report(
             store,

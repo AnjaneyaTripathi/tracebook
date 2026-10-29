@@ -82,10 +82,12 @@ class PriceBook:
                 cost += count * price / 1_000_000
         return cost, "estimated_api_value"
 
-    def apply(self, store: Store) -> int:
+    def apply(self, store: Store, since: str | None = None) -> int:
+        """Re-estimate costs; ``since`` limits the pass to calls at or after that timestamp."""
         count = 0
         with store.transaction():
-            for call in store.iter_rows("SELECT * FROM model_calls"):
+            query = "SELECT * FROM model_calls" + (" WHERE ts>=?" if since else "")
+            for call in store.iter_rows(query, (since,) if since else ()):
                 cost, reason = self.estimate(call)
                 data = json.loads(call["data"])
                 data.update(
@@ -94,9 +96,12 @@ class PriceBook:
                     pricing_basis=self.data.get("basis"),
                     pricing_source=self.rates_for(call).get("source"),
                 )
+                count += 1
+                if cost == call["cost_estimated"] and data == json.loads(call["data"]):
+                    continue
                 store.db.execute(
                     "UPDATE model_calls SET cost_estimated=?,data=? WHERE id=?",
                     (cost, encode(data), call["id"]),
                 )
-                count += 1
+                store.dirty_sessions.add(call["session_id"])
         return count

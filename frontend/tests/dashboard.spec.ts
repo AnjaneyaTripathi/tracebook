@@ -82,3 +82,32 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: `test-results/prompt-${width === 390 ? 'mobile' : 'desktop'}.png`, fullPage: false });
   });
 }
+
+test('session table sorts, filters and hides sessions without usage', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'View all sessions' }).click();
+  const rows = page.locator('.session-table tbody tr');
+  await expect(page.getByText('1–25 of 42')).toBeVisible();
+  const tokens = page.getByRole('columnheader', { name: /Tokens/ });
+  const column = async () =>
+    (await rows.locator('td.numeric:nth-child(4)').allInnerTexts()).map((v) =>
+      v.endsWith('K') ? parseFloat(v) * 1000 : parseFloat(v)
+    );
+  const sorted = (values: number[], direction: 1 | -1) =>
+    values.every((v, i) => i === 0 || (values[i - 1] - v) * direction >= 0);
+  await tokens.getByRole('button').click();
+  await expect(tokens).toHaveAttribute('aria-sort', 'descending');
+  await expect.poll(async () => sorted(await column(), 1)).toBe(true);
+  await tokens.getByRole('button').click();
+  await expect(tokens).toHaveAttribute('aria-sort', 'ascending');
+  await expect.poll(async () => sorted(await column(), -1)).toBe(true);
+  expect((await column()).length).toBe(25);
+  await page.getByLabel('Project').selectOption({ label: 'design-system (14)' });
+  await expect(page.getByText('1–14 of 14')).toBeVisible();
+  await page.getByRole('button', { name: 'Reset' }).click();
+  await expect(page.getByText('(1 hidden)')).toBeVisible();
+  await page.getByLabel('Show sessions with no usage').check();
+  await expect(page.getByText('1–25 of 43')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Model' }).selectOption('example-model');
+  await expect(page.getByText('1–25 of 42')).toBeVisible();
+});
